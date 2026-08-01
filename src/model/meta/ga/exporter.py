@@ -6,6 +6,52 @@ from src.schema.data import DatasetOutputModel
 from src.model.meta.ga.types import Chromosome, ScheduledTask
 
 
+def update_experiments_manifest(workspace_root: Path) -> None:
+    """Scan experiments/ directory and generate manifest for web_viz selector."""
+    exp_dir = workspace_root / "experiments"
+    if not exp_dir.exists():
+        return
+
+    manifest = []
+    for exp_file in sorted(exp_dir.glob("*.json"), reverse=True):
+        if exp_file.name == "manifest.json":
+            continue
+        try:
+            with open(exp_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            kpis = data.get("kpis", {})
+            ga_kpi = data.get("heuristic_comparisons", {}).get("ga", {})
+            manifest.append(
+                {
+                    "filename": exp_file.name,
+                    "makespan": kpis.get("makespan", 0.0),
+                    "tardiness": kpis.get("total_weighted_tardiness", 0.0),
+                    "setup_time": kpis.get("total_setup_time", 0.0),
+                    "fitness": ga_kpi.get("fitness", 0.0),
+                    "scheduled_tasks": kpis.get("total_scheduled_tasks", 0),
+                }
+            )
+        except Exception:
+            continue
+
+    manifest_payload = {"experiments": manifest}
+    with open(exp_dir / "manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest_payload, f, indent=2)
+
+    web_viz_public = workspace_root / "web_viz" / "public"
+    if web_viz_public.exists():
+        web_viz_exp = web_viz_public / "experiments"
+        web_viz_exp.mkdir(parents=True, exist_ok=True)
+
+        for exp_file in exp_dir.glob("*.json"):
+            target_path = web_viz_exp / exp_file.name
+            with open(exp_file, "r", encoding="utf-8") as src, open(target_path, "w", encoding="utf-8") as dst:
+                dst.write(src.read())
+
+        with open(web_viz_public / "experiments_manifest.json", "w", encoding="utf-8") as f:
+            json.dump(manifest_payload, f, indent=2)
+
+
 def export_schedule_results(
     best_chromo: Chromosome,
     tasks: List[ScheduledTask],
@@ -119,17 +165,26 @@ def export_schedule_results(
         ],
     }
 
-    out_file = Path(output_path)
+    out_file = Path(output_path).resolve()
     out_file.parent.mkdir(parents=True, exist_ok=True)
     with open(out_file, "w", encoding="utf-8") as f:
         json.dump(export_payload, f, indent=2)
 
     print(f"Schedule optimization results exported to: {output_path}")
 
-    # Sync with web_viz/public directory for real-time visualization
-    web_viz_target = out_file.resolve().parent.parent / "web_viz" / "public" / "ga_schedule_results.json"
+    # Locate workspace root by walking up to find web_viz or pyproject.toml
+    workspace_root = out_file.parent
+    while workspace_root.parent != workspace_root:
+        if (workspace_root / "web_viz").exists() or (workspace_root / "pyproject.toml").exists():
+            break
+        workspace_root = workspace_root.parent
+
+    # Sync default dataset for web viz
+    web_viz_target = workspace_root / "web_viz" / "public" / "ga_schedule_results.json"
     if web_viz_target.parent.exists():
         with open(web_viz_target, "w", encoding="utf-8") as f:
             json.dump(export_payload, f, indent=2)
         print(f"Web visualization dataset updated at: {web_viz_target}")
 
+    # Update manifest for experiment selector dropdown in web_viz
+    update_experiments_manifest(workspace_root)

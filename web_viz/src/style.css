@@ -717,6 +717,29 @@ body {
   border: 2px solid #d97706 !important;
 }
 
+/* Lot Highlight & Dimming Modes */
+.gantt-block.highlighted {
+  z-index: 60 !important;
+  border: 2px solid #fbbf24 !important;
+  transform: translateY(-2px) scale(1.05) !important;
+  animation: pulse-lot-glow 1.5s infinite alternate ease-in-out !important;
+}
+
+@keyframes pulse-lot-glow {
+  0% {
+    box-shadow: 0 0 10px rgba(251, 191, 36, 0.85), 0 0 0 2px #fbbf24;
+  }
+  100% {
+    box-shadow: 0 0 22px rgba(245, 158, 11, 1), 0 0 0 3px #f59e0b;
+  }
+}
+
+.gantt-block.dimmed {
+  opacity: 0.16 !important;
+  filter: grayscale(60%) !important;
+}
+
+
 /* Optimization Progress Tab */
 .progress-section, .benchmarks-section {
   padding: 24px;

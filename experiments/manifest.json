@@ -1,0 +1,28 @@
+{
+  "experiments": [
+    {
+      "filename": "ga_20260801_113644.json",
+      "makespan": 16135.21,
+      "tardiness": 2019358.29,
+      "setup_time": 26929.88,
+      "fitness": 1019905.68,
+      "scheduled_tasks": 6250
+    },
+    {
+      "filename": "ga_20260801_113211.json",
+      "makespan": 16511.0,
+      "tardiness": 2091093.42,
+      "setup_time": 26646.55,
+      "fitness": 1055829.32,
+      "scheduled_tasks": 6250
+    },
+    {
+      "filename": "ga_20260801_113045.json",
+      "makespan": 16615.57,
+      "tardiness": 2120285.09,
+      "setup_time": 26324.82,
+      "fitness": 1070392.18,
+      "scheduled_tasks": 6250
+    }
+  ]
+}

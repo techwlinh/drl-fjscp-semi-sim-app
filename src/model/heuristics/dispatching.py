@@ -1,9 +1,11 @@
 from typing import Dict, List, Tuple
 
 from src.config.ga import GAConfig
+from src.fab.decoder import FJSPDecoder
+from src.fab.objective import compute_weighted_fitness
 from src.schema.data import DatasetOutputModel
-from src.model.meta.ga.decoder import FJSPDecoder
 from src.model.meta.ga.types import Chromosome, ScheduledTask
+
 
 
 class HeuristicScheduler:
@@ -77,12 +79,15 @@ class HeuristicScheduler:
         chromo.makespan = makespan
         chromo.total_tardiness = tardiness
         chromo.total_setup_time = setup_time
-        fitness = (
-            self.config.weight_makespan * makespan
-            + self.config.weight_tardiness * tardiness
-            + self.config.weight_setup * setup_time
+        chromo.fitness = compute_weighted_fitness(
+            makespan,
+            tardiness,
+            setup_time,
+            weight_makespan=self.config.weight_makespan,
+            weight_tardiness=self.config.weight_tardiness,
+            weight_setup=self.config.weight_setup,
         )
-        chromo.fitness = round(fitness, 2)
+
 
         # Compute utilization & tardy count
         total_tools = sum(

@@ -47,14 +47,22 @@ const kpiSetup = document.getElementById("kpi-setup");
 const kpiUtilization = document.getElementById("kpi-utilization");
 const kpiTotalTasks = document.getElementById("kpi-total-tasks");
 
+const selectExperiment = document.getElementById("select-experiment");
 const filterArea = document.getElementById("filter-area");
 const filterProduct = document.getElementById("filter-product");
+const filterJob = document.getElementById("filter-job");
 const filterPriority = document.getElementById("filter-priority");
 const selectGroupMode = document.getElementById("group-mode");
 const selectDetailLevel = document.getElementById("detail-level");
 const searchJob = document.getElementById("search-job");
 const zoomSlider = document.getElementById("zoom-slider");
 const zoomVal = document.getElementById("zoom-val");
+
+const btnResetHighlight = document.getElementById("btn-reset-highlight");
+let selectedJob = "ALL";
+let highlightedJob = null;
+
+
 
 const dynamicLegend = document.getElementById("dynamic-legend");
 const btnResetProductFilter = document.getElementById("btn-reset-product-filter");
@@ -83,18 +91,41 @@ tabButtons.forEach((btn) => {
   });
 });
 
-// Load Initial Data
-async function loadData() {
+// Load Experiments Manifest for Dropdown Selector
+async function loadExperimentsManifest() {
+  if (!selectExperiment) return;
   try {
-    const res = await fetch("/ga_schedule_results.json");
+    const res = await fetch("/experiments_manifest.json");
+    if (!res.ok) return;
+    const manifest = await res.json();
+    if (!manifest.experiments || !Array.isArray(manifest.experiments)) return;
+
+    selectExperiment.innerHTML = `<option value="/ga_schedule_results.json">Latest Run (Default)</option>`;
+    manifest.experiments.forEach((exp) => {
+      const opt = document.createElement("option");
+      opt.value = `/experiments/${exp.filename}`;
+      opt.textContent = `${exp.filename} (Fit: ${exp.fitness})`;
+      selectExperiment.appendChild(opt);
+    });
+  } catch (err) {
+    console.warn("Could not load experiments manifest:", err);
+  }
+}
+
+// Load Initial / Selected Data
+async function loadData(url = null) {
+  const targetUrl = url || (selectExperiment ? selectExperiment.value : "/ga_schedule_results.json");
+  try {
+    const res = await fetch(targetUrl);
     if (!res.ok) throw new Error("Dataset file not found");
     datasetData = await res.json();
     initDashboard();
   } catch (err) {
-    console.error("Failed to load initial dataset:", err);
-    sidebarRows.innerHTML = `<div class="sidebar-row" style="color:#ef4444; padding:12px;">Please load ga_schedule_results.json file</div>`;
+    console.error("Failed to load dataset:", err);
+    sidebarRows.innerHTML = `<div class="sidebar-row" style="color:#ef4444; padding:12px;">Failed to load dataset: ${targetUrl}</div>`;
   }
 }
+
 
 function initDashboard() {
   if (!datasetData) return;
@@ -102,10 +133,41 @@ function initDashboard() {
   renderKPIs(datasetData.kpis);
   populateAreaFilter(datasetData.factory_hierarchy);
   populateProductFilter();
+  populateJobFilter();
   renderGanttChart();
   renderProgressSection(datasetData.history);
   renderBenchmarkSection(datasetData.heuristic_comparisons);
 }
+
+// ----------------------------------------------------------------------
+// Job / Lot Filter Setup
+// ----------------------------------------------------------------------
+function populateJobFilter() {
+  if (!filterJob || !datasetData || !datasetData.tasks) return;
+  const currentVal = filterJob.value || "ALL";
+
+  const jobSet = new Set();
+  datasetData.tasks.forEach((t) => jobSet.add(t.job_id));
+
+  const sortedJobs = Array.from(jobSet).sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
+  );
+
+  filterJob.innerHTML = `<option value="ALL">All Jobs (${sortedJobs.length} lots)</option>`;
+  sortedJobs.forEach((jId) => {
+    const opt = document.createElement("option");
+    opt.value = jId;
+    opt.textContent = `Job/Lot: ${jId}`;
+    filterJob.appendChild(opt);
+  });
+
+  if (jobSet.has(currentVal)) {
+    filterJob.value = currentVal;
+  } else {
+    filterJob.value = "ALL";
+  }
+}
+
 
 // ----------------------------------------------------------------------
 // Render KPI Cards
@@ -234,6 +296,7 @@ function renderGanttChart() {
 
   selectedArea = filterArea.value;
   selectedProduct = filterProduct.value;
+  selectedJob = filterJob ? filterJob.value : "ALL";
   selectedPriority = filterPriority.value;
   groupMode = selectGroupMode.value;
   detailLevel = selectDetailLevel.value;
@@ -248,6 +311,7 @@ function renderGanttChart() {
   const filteredTasks = datasetData.tasks.filter((t) => {
     if (selectedArea !== "ALL" && t.area_id !== selectedArea) return false;
     if (selectedProduct !== "ALL" && t.product_type !== selectedProduct) return false;
+    if (selectedJob !== "ALL" && t.job_id !== selectedJob) return false;
     if (selectedPriority !== "ALL" && t.priority !== selectedPriority) return false;
     if (searchTerm) {
       const matchJob = t.job_id.toLowerCase().includes(searchTerm);
@@ -258,6 +322,22 @@ function renderGanttChart() {
     }
     return true;
   });
+
+  // Track tools containing operations of filtered tasks
+  const activeToolIds = new Set(filteredTasks.map((t) => t.tool_id));
+  const isFilterActive =
+    selectedArea !== "ALL" ||
+    selectedProduct !== "ALL" ||
+    selectedJob !== "ALL" ||
+    selectedPriority !== "ALL" ||
+    searchTerm !== "";
+
+  const shouldRenderTool = (toolId) => {
+    if (isFilterActive) {
+      return activeToolIds.has(toolId);
+    }
+    return true;
+  };
 
   // Extract Visible Hierarchy Rows based on groupMode
   const displayRows = [];
@@ -288,17 +368,19 @@ function renderGanttChart() {
         let wsgToolsCount = 0;
         wsg.workstations.forEach((ws) => {
           ws.tools.forEach((toolId) => {
-            wsgToolsCount++;
-            if (!isWsgCollapsed) {
-              displayRows.push({
-                type: "tool",
-                id: toolId,
-                tool_id: toolId,
-                ws_id: ws.ws_id,
-                wsg_id: wsgId,
-                area_id: areaId,
-                level: 1,
-              });
+            if (shouldRenderTool(toolId)) {
+              wsgToolsCount++;
+              if (!isWsgCollapsed) {
+                displayRows.push({
+                  type: "tool",
+                  id: toolId,
+                  tool_id: toolId,
+                  ws_id: ws.ws_id,
+                  wsg_id: wsgId,
+                  area_id: areaId,
+                  level: 1,
+                });
+              }
             }
           });
         });
@@ -306,6 +388,7 @@ function renderGanttChart() {
       } else if (groupMode === "ws") {
         // Grouping by Workstation (Recommended)
         if (!isAreaCollapsed) {
+          let wsgMatchingToolsCount = 0;
           const wsgRowIndex = displayRows.length;
           displayRows.push({
             type: "wsg",
@@ -317,62 +400,68 @@ function renderGanttChart() {
             level: 1,
           });
 
-          let wsgHasTools = false;
           wsg.workstations.forEach((ws) => {
             const wsId = ws.ws_id;
-            const isWsCollapsed = isWsgCollapsed || collapsedIds.has(`ws_${wsId}`);
+            const matchingTools = ws.tools.filter(shouldRenderTool);
 
-            if (!isWsgCollapsed) {
-              displayRows.push({
-                type: "ws",
-                id: `ws_${wsId}`,
-                label: `⚙️ WS: ${wsId}`,
-                ws_id: wsId,
-                wsg_id: wsgId,
-                area_id: areaId,
-                isCollapsed: isWsCollapsed,
-                toolCount: ws.tools.length,
-                level: 2,
-              });
+            if (matchingTools.length > 0) {
+              wsgMatchingToolsCount += matchingTools.length;
+              const isWsCollapsed = isWsgCollapsed || collapsedIds.has(`ws_${wsId}`);
 
-              if (!isWsCollapsed) {
-                ws.tools.forEach((toolId) => {
-                  displayRows.push({
-                    type: "tool",
-                    id: toolId,
-                    tool_id: toolId,
-                    ws_id: wsId,
-                    wsg_id: wsgId,
-                    area_id: areaId,
-                    level: 3,
-                  });
-                  wsgHasTools = true;
+              if (!isWsgCollapsed) {
+                displayRows.push({
+                  type: "ws",
+                  id: `ws_${wsId}`,
+                  label: `⚙️ WS: ${wsId}`,
+                  ws_id: wsId,
+                  wsg_id: wsgId,
+                  area_id: areaId,
+                  isCollapsed: isWsCollapsed,
+                  toolCount: matchingTools.length,
+                  level: 2,
                 });
+
+                if (!isWsCollapsed) {
+                  matchingTools.forEach((toolId) => {
+                    displayRows.push({
+                      type: "tool",
+                      id: toolId,
+                      tool_id: toolId,
+                      ws_id: wsId,
+                      wsg_id: wsgId,
+                      area_id: areaId,
+                      level: 3,
+                    });
+                  });
+                }
               }
             }
           });
 
-          if (!wsgHasTools && isWsgCollapsed) {
-            // Keep WSG header
+          if (wsgMatchingToolsCount === 0) {
+            displayRows.splice(wsgRowIndex, 1);
+          } else {
+            areaChildCount++;
           }
         }
-        areaChildCount++;
       } else {
         // Flat Tool View
         wsg.workstations.forEach((ws) => {
           ws.tools.forEach((toolId) => {
-            if (!isAreaCollapsed) {
-              displayRows.push({
-                type: "tool",
-                id: toolId,
-                tool_id: toolId,
-                ws_id: ws.ws_id,
-                wsg_id: wsgId,
-                area_id: areaId,
-                level: 1,
-              });
+            if (shouldRenderTool(toolId)) {
+              if (!isAreaCollapsed) {
+                displayRows.push({
+                  type: "tool",
+                  id: toolId,
+                  tool_id: toolId,
+                  ws_id: ws.ws_id,
+                  wsg_id: wsgId,
+                  area_id: areaId,
+                  level: 1,
+                });
+              }
+              areaChildCount++;
             }
-            areaChildCount++;
           });
         });
       }
@@ -382,6 +471,7 @@ function renderGanttChart() {
       displayRows.splice(areaRowIndex, 1);
     }
   });
+
 
   // 1. Render Sidebar Rows
   sidebarRows.innerHTML = "";
@@ -463,6 +553,39 @@ function renderGanttChart() {
     tasksByTool[t.tool_id].push(t);
   });
 
+  if (btnResetHighlight) {
+    if (highlightedJob) {
+      btnResetHighlight.textContent = `✨ Clear Highlight (${highlightedJob})`;
+      btnResetHighlight.classList.remove("hidden");
+    } else {
+      btnResetHighlight.classList.add("hidden");
+    }
+  }
+
+  const applyHighlightClass = (blockElement, jobId) => {
+    if (highlightedJob) {
+      if (jobId === highlightedJob) {
+        blockElement.classList.add("highlighted");
+        blockElement.classList.remove("dimmed");
+      } else {
+        blockElement.classList.add("dimmed");
+        blockElement.classList.remove("highlighted");
+      }
+    }
+  };
+
+  const bindBlockHighlightClick = (blockElement, jobId) => {
+    blockElement.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (highlightedJob === jobId) {
+        highlightedJob = null;
+      } else {
+        highlightedJob = jobId;
+      }
+      renderGanttChart();
+    });
+  };
+
   displayRows.forEach((row) => {
     const rowDiv = document.createElement("div");
     let rowClass = "timeline-row";
@@ -482,6 +605,8 @@ function renderGanttChart() {
           transBlock.style.left = `${left}px`;
           transBlock.style.width = `${width}px`;
           transBlock.textContent = width > 28 ? "🚚" : "";
+          applyHighlightClass(transBlock, t.job_id);
+          bindBlockHighlightClick(transBlock, t.job_id);
           attachTooltip(transBlock, t, "transport");
           rowDiv.appendChild(transBlock);
         }
@@ -495,6 +620,8 @@ function renderGanttChart() {
           setupBlock.style.left = `${left}px`;
           setupBlock.style.width = `${width}px`;
           setupBlock.textContent = width > 28 ? "⚙️" : "";
+          applyHighlightClass(setupBlock, t.job_id);
+          bindBlockHighlightClick(setupBlock, t.job_id);
           attachTooltip(setupBlock, t, "setup");
           rowDiv.appendChild(setupBlock);
         }
@@ -527,6 +654,8 @@ function renderGanttChart() {
           procBlock.textContent = "";
         }
 
+        applyHighlightClass(procBlock, t.job_id);
+        bindBlockHighlightClick(procBlock, t.job_id);
         attachTooltip(procBlock, t, "proc");
         rowDiv.appendChild(procBlock);
       });
@@ -534,6 +663,7 @@ function renderGanttChart() {
 
     timelineBody.appendChild(rowDiv);
   });
+
 }
 
 function toggleCollapse(id) {
@@ -772,16 +902,29 @@ function renderBenchmarkSection(heuristicComparisons) {
 // ----------------------------------------------------------------------
 filterArea.addEventListener("change", renderGanttChart);
 
+if (filterJob) {
+  filterJob.addEventListener("change", renderGanttChart);
+}
+
 filterProduct.addEventListener("change", (e) => {
   selectedProduct = e.target.value;
   updateProductChipStates();
   renderGanttChart();
 });
 
+
 filterPriority.addEventListener("change", renderGanttChart);
 selectGroupMode.addEventListener("change", renderGanttChart);
 selectDetailLevel.addEventListener("change", renderGanttChart);
 searchJob.addEventListener("input", renderGanttChart);
+
+if (btnResetHighlight) {
+  btnResetHighlight.addEventListener("click", () => {
+    highlightedJob = null;
+    renderGanttChart();
+  });
+}
+
 
 btnResetProductFilter.addEventListener("click", () => {
   selectedProduct = "ALL";
@@ -815,7 +958,15 @@ btnToggleCollapse.addEventListener("click", () => {
   renderGanttChart();
 });
 
-btnReload.addEventListener("click", loadData);
+if (selectExperiment) {
+  selectExperiment.addEventListener("change", () => {
+    loadData(selectExperiment.value);
+  });
+}
+
+btnReload.addEventListener("click", () => {
+  loadExperimentsManifest().then(() => loadData());
+});
 
 btnThemeToggle.addEventListener("click", () => {
   const currentTheme = document.documentElement.getAttribute("data-theme");
@@ -845,4 +996,5 @@ fileInput.addEventListener("change", (e) => {
 });
 
 // Initialize on page load
-loadData();
+loadExperimentsManifest().then(() => loadData());
+

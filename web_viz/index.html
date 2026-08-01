@@ -85,6 +85,13 @@
               <input type="text" id="search-job" placeholder="Search Job ID, Step, Tool, or Product..." />
             </div>
 
+            <div class="select-box" title="Select Experiment Run File">
+              <label for="select-experiment">🧪 Run:</label>
+              <select id="select-experiment">
+                <option value="/ga_schedule_results.json">Latest Run (Default)</option>
+              </select>
+            </div>
+
             <div class="select-box" title="Filter by Manufacturing Area">
               <label for="filter-area">Area:</label>
               <select id="filter-area">
@@ -92,12 +99,23 @@
               </select>
             </div>
 
+
             <div class="select-box" title="Filter by Product Type">
               <label for="filter-product">Product:</label>
               <select id="filter-product">
                 <option value="ALL">All Products</option>
               </select>
             </div>
+
+            <div class="select-box" title="Filter or Highlight Specific Job / Lot ID">
+              <label for="filter-job">📦 Job/Lot:</label>
+              <select id="filter-job">
+                <option value="ALL">All Jobs</option>
+              </select>
+              <button id="btn-reset-highlight" class="btn-text-reset hidden" title="Click to clear highlighted Lot">✨ Clear Highlight</button>
+            </div>
+
+
 
             <div class="select-box" title="Filter by Lot Priority">
               <label for="filter-priority">Priority:</label>

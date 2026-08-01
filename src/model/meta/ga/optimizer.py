@@ -2,9 +2,11 @@ import random
 from typing import List, Tuple
 
 from src.schema.data import DatasetOutputModel
+from src.fab.decoder import FJSPDecoder, NumbaFJSPDecoder
+from src.fab.objective import compute_weighted_fitness
 from src.model.meta.ga.config import GAConfig
-from src.model.meta.ga.decoder import FJSPDecoder
 from src.model.meta.ga.types import Chromosome, ScheduledTask
+
 
 
 class GAOptimizer:
@@ -12,6 +14,9 @@ class GAOptimizer:
         self.dataset = dataset
         self.config = config
         self.decoder = FJSPDecoder(dataset)
+
+        if self.config.use_numba:
+            self.numba_decoder = NumbaFJSPDecoder(dataset)
 
         # Total operations count
         self.num_jobs = len(dataset.job_list)
@@ -40,18 +45,26 @@ class GAOptimizer:
 
     def evaluate(self, chromo: Chromosome) -> float:
         """Evaluate chromosome and compute weighted fitness score."""
-        _, makespan, tardiness, setup_time, _ = self.decoder.decode(chromo)
+        if self.config.use_numba and hasattr(self, "numba_decoder"):
+            makespan, tardiness, setup_time = self.numba_decoder.decode_fitness(chromo)
+        else:
+            _, makespan, tardiness, setup_time, _ = self.decoder.decode(chromo)
+
         chromo.makespan = makespan
         chromo.total_tardiness = tardiness
         chromo.total_setup_time = setup_time
 
-        fitness = (
-            self.config.weight_makespan * makespan
-            + self.config.weight_tardiness * tardiness
-            + self.config.weight_setup * setup_time
+        chromo.fitness = compute_weighted_fitness(
+            makespan,
+            tardiness,
+            setup_time,
+            weight_makespan=self.config.weight_makespan,
+            weight_tardiness=self.config.weight_tardiness,
+            weight_setup=self.config.weight_setup,
         )
-        chromo.fitness = round(fitness, 2)
         return chromo.fitness
+
+
 
     def tournament_selection(self, pop: List[Chromosome]) -> Chromosome:
         """Tournament selection."""
