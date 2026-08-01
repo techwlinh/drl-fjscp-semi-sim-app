@@ -82,26 +82,31 @@ class FJSPDecoder:
         wsg_matrix = self.setup_matrices.get(wsg_id, {})
         return wsg_matrix.get(prev_recipe, {}).get(next_recipe, 0.0)
 
-    def decode(self, chromo: Chromosome) -> Tuple[List[ScheduledTask], float, float, float, float]:
+    def decode(
+        self, chromo: Chromosome, use_greedy_ms: bool = True
+    ) -> Tuple[List[ScheduledTask], float, float, float, float]:
         """
-        Decode Chromosome (OS + MS) into complete schedule.
+        Decode Chromosome (OS + optional MS) into complete schedule using Active Insertion Decoding.
+        If chromo.ms is empty or use_greedy_ms is True, uses Earliest-Finish-Time (EFT) Machine Selection.
         Returns: (scheduled_tasks, makespan, total_weighted_tardiness, total_setup_time, fitness)
         """
-        # State tracking for simulation
         job_op_step_count: Dict[int, int] = {j_idx: 0 for j_idx in range(len(self.jobs_list))}
         job_current_time: Dict[int, float] = {j_idx: 0.0 for j_idx in range(len(self.jobs_list))}
         job_current_location: Dict[int, str] = {
             j_idx: "Central_Stockroom" for j_idx in range(len(self.jobs_list))
         }
 
-        tool_available_time: Dict[str, float] = {t_id: 0.0 for t_id in self.tool_info}
-        tool_current_recipe: Dict[str, str] = {
-            t_id: info["initial_setup"] for t_id, info in self.tool_info.items()
+        # Track active intervals per tool: list of [start_time, end_time, recipe_state]
+        tool_intervals: Dict[str, List[List]] = {
+            t_id: [[0.0, 0.0, info["initial_setup"]]]
+            for t_id, info in self.tool_info.items()
         }
 
         scheduled_tasks: List[ScheduledTask] = []
         total_setup_time = 0.0
         job_completion_times: Dict[int, float] = {}
+
+        has_explicit_ms = bool(chromo.ms and len(chromo.ms) == len(self.op_info) and not use_greedy_ms)
 
         # Iterate over OS sequence
         for op_count_idx, job_idx in enumerate(chromo.os):
@@ -109,47 +114,87 @@ class FJSPDecoder:
             global_op_idx = self.job_op_indices[job_idx][step_seq_idx]
             op_data = self.op_info[global_op_idx]
 
-            # Determine selected tool from MS
             valid_tools = op_data["valid_tools"]
-            tool_selection_val = chromo.ms[global_op_idx]
-            selected_tool_id = valid_tools[tool_selection_val % len(valid_tools)]
-            tool_meta = self.tool_info[selected_tool_id]
 
-            # 1. AMHS Transport Calculation
-            current_loc = job_current_location[job_idx]
-            target_ws_id = tool_meta["ws_id"]
-            travel_time = self.get_travel_time(current_loc, target_ws_id)
+            if has_explicit_ms:
+                tool_selection_val = chromo.ms[global_op_idx]
+                selected_tool_id = valid_tools[tool_selection_val % len(valid_tools)]
+                eval_tools = [selected_tool_id]
+            else:
+                eval_tools = valid_tools
 
-            transport_start = job_current_time[job_idx]
-            transport_end = transport_start + travel_time
+            best_tool_id = eval_tools[0]
+            best_finish_time = float("inf")
+            best_setup_time = 0.0
+            best_insert_idx = -1
+            best_transport_start = 0.0
+            best_transport_end = 0.0
+            best_setup_start = 0.0
+            best_setup_end = 0.0
+            best_proc_start = 0.0
 
-            # 2. Tool Availability & Setup Calculation
-            arrival_time = transport_end
-            tool_ready_time = max(arrival_time, tool_available_time[selected_tool_id])
-
-            prev_recipe = tool_current_recipe[selected_tool_id]
             curr_recipe = op_data["product_type"]
-            setup_duration = self.get_setup_time(op_data["wsg_id"], prev_recipe, curr_recipe)
+            proc_duration = op_data["nominal_proc_time"]
+            curr_job_time = job_current_time[job_idx]
+            curr_loc = job_current_location[job_idx]
 
-            setup_start = tool_ready_time
-            setup_end = setup_start + setup_duration
-            total_setup_time += setup_duration
+            # Evaluate tools & idle gaps for earliest completion time (Active Insertion)
+            for t_id in eval_tools:
+                tool_meta = self.tool_info[t_id]
+                target_ws_id = tool_meta["ws_id"]
+                travel_time = self.get_travel_time(curr_loc, target_ws_id)
+                arrival_time = curr_job_time + travel_time
 
-            # 3. Processing Calculation
-            proc_start = setup_end
-            proc_end = proc_start + op_data["nominal_proc_time"]
+                intervals = tool_intervals[t_id]
+                num_intervals = len(intervals)
 
-            # 4. Update State Tracking
-            tool_available_time[selected_tool_id] = proc_end
-            tool_current_recipe[selected_tool_id] = curr_recipe
-            job_current_time[job_idx] = proc_end
+                for idx in range(num_intervals):
+                    prev_end = intervals[idx][1]
+                    prev_rec = intervals[idx][2]
+
+                    setup_dur = self.get_setup_time(op_data["wsg_id"], prev_rec, curr_recipe)
+                    s_start = max(arrival_time, prev_end)
+                    s_end = s_start + setup_dur
+                    p_start = s_end
+                    p_end = p_start + proc_duration
+
+                    # Check if fits in gap before next interval
+                    if idx + 1 < num_intervals:
+                        next_start = intervals[idx + 1][0]
+                        next_rec = intervals[idx + 1][2]
+                        next_setup_dur = self.get_setup_time(op_data["wsg_id"], curr_recipe, next_rec)
+                        if p_end + next_setup_dur > next_start:
+                            continue  # Does not fit in gap
+
+                    if p_end < best_finish_time:
+                        best_finish_time = p_end
+                        best_tool_id = t_id
+                        best_setup_time = setup_dur
+                        best_insert_idx = idx + 1
+                        best_transport_start = curr_job_time
+                        best_transport_end = arrival_time
+                        best_setup_start = s_start
+                        best_setup_end = s_end
+                        best_proc_start = p_start
+
+            # Apply state updates & insert interval
+            tool_meta = self.tool_info[best_tool_id]
+            target_ws_id = tool_meta["ws_id"]
+
+            intervals = tool_intervals[best_tool_id]
+            intervals.insert(best_insert_idx, [best_setup_start, best_finish_time, curr_recipe])
+
+            job_current_time[job_idx] = max(job_current_time[job_idx], best_finish_time)
             job_current_location[job_idx] = target_ws_id
             job_op_step_count[job_idx] += 1
-            job_completion_times[job_idx] = proc_end
+            job_completion_times[job_idx] = max(
+                job_completion_times.get(job_idx, 0.0), best_finish_time
+            )
+            total_setup_time += best_setup_time
 
-            # Calculate Tardiness at step (tracked at final step)
+            # Tardiness at step (final step)
             is_final_step = step_seq_idx == (len(self.job_op_indices[job_idx]) - 1)
-            tardiness = max(0.0, proc_end - op_data["due_date"]) if is_final_step else 0.0
+            tardiness = max(0.0, best_finish_time - op_data["due_date"]) if is_final_step else 0.0
 
             scheduled_tasks.append(
                 ScheduledTask(
@@ -160,16 +205,16 @@ class FJSPDecoder:
                     step_id=op_data["step_id"],
                     wsg_id=op_data["wsg_id"],
                     ws_id=target_ws_id,
-                    tool_id=selected_tool_id,
+                    tool_id=best_tool_id,
                     area_id=tool_meta["area_id"],
-                    from_location=current_loc,
+                    from_location=curr_loc,
                     to_location=target_ws_id,
-                    transport_start=round(transport_start, 2),
-                    transport_end=round(transport_end, 2),
-                    setup_start=round(setup_start, 2),
-                    setup_end=round(setup_end, 2),
-                    proc_start=round(proc_start, 2),
-                    proc_end=round(proc_end, 2),
+                    transport_start=round(best_transport_start, 2),
+                    transport_end=round(best_transport_end, 2),
+                    setup_start=round(best_setup_start, 2),
+                    setup_end=round(best_setup_end, 2),
+                    proc_start=round(best_proc_start, 2),
+                    proc_end=round(best_finish_time, 2),
                     due_date=op_data["due_date"],
                     tardiness=round(tardiness, 2),
                 )

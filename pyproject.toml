@@ -11,4 +11,5 @@ dependencies = [
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
     "torch>=2.13.0",
+    "tqdm>=4.70.0",
 ]

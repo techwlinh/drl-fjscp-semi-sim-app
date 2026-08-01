@@ -5,7 +5,7 @@ from src.fab.decoder.fjsp import FJSPDecoder
 from src.fab.objective import compute_weighted_fitness
 from src.schema.data import DatasetOutputModel
 from src.model.meta.ga.types import Chromosome, ScheduledTask
-
+from src.config.experiment import ObjectiveConfig
 
 
 class HeuristicScheduler:
@@ -14,6 +14,7 @@ class HeuristicScheduler:
     def __init__(self, dataset: DatasetOutputModel, config: GAConfig = None):
         self.dataset = dataset
         self.config = config or GAConfig()
+        self.obj_config = ObjectiveConfig()
         self.decoder = FJSPDecoder(dataset)
         self.num_jobs = len(dataset.job_list)
         self.op_info = self.decoder.op_info
@@ -83,9 +84,10 @@ class HeuristicScheduler:
             makespan,
             tardiness,
             setup_time,
-            weight_makespan=self.config.weight_makespan,
-            weight_tardiness=self.config.weight_tardiness,
-            weight_setup=self.config.weight_setup,
+            weight_makespan=self.obj_config.weight_makespan,
+            weight_tardiness=self.obj_config.weight_tardiness,
+            weight_setup=self.obj_config.weight_setup,
+            num_jobs=self.num_jobs,
         )
 
 

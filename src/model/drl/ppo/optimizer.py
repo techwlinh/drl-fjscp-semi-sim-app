@@ -1,5 +1,6 @@
 from typing import List, Tuple
 import numpy as np
+from tqdm import tqdm
 
 from src.schema.data import DatasetOutputModel
 from src.fab.decoder.fjsp import FJSPDecoder
@@ -9,6 +10,7 @@ from src.model.drl.ppo.agent import PPOAgent
 from src.model.drl.ppo.config import PPOConfig
 from src.model.drl.ppo.env import FJSPEnv
 from src.model.meta.ga.types import Chromosome, ScheduledTask
+from src.config.experiment import ObjectiveConfig
 
 
 class PPOOptimizer:
@@ -19,6 +21,7 @@ class PPOOptimizer:
     def __init__(self, dataset: DatasetOutputModel, config: PPOConfig = None):
         self.dataset = dataset
         self.config = config or PPOConfig()
+        self.obj_config = ObjectiveConfig()
 
         self.env = FJSPEnv(dataset, self.config)
         self.obs_dim = self.env.obs_dim
@@ -64,24 +67,40 @@ class PPOOptimizer:
             terminated = False
             truncated = False
 
-            while not (terminated or truncated):
-                action, log_prob, value = self.agent.select_action(
-                    obs, action_mask, deterministic=False
-                )
+            with tqdm(
+                total=self.env.total_ops,
+                desc=f"Episode {episode:3d}/{self.config.num_episodes}",
+                unit="step",
+                leave=True,
+            ) as pbar:
+                while not (terminated or truncated):
+                    action, log_prob, value = self.agent.select_action(
+                        obs, action_mask, deterministic=False
+                    )
 
-                next_obs, reward, terminated, truncated, next_info = self.env.step(action)
-                next_mask = next_info["action_mask"]
+                    next_obs, reward, terminated, truncated, next_info = self.env.step(action)
+                    raw_reward = next_info.get("raw_reward", reward * self.config.reward_scale)
+                    next_mask = next_info["action_mask"]
 
-                obs_list.append(obs)
-                mask_list.append(action_mask)
-                action_list.append(action)
-                log_prob_list.append(log_prob)
-                value_list.append(value)
-                reward_list.append(reward)
-                done_list.append(terminated or truncated)
+                    obs_list.append(obs)
+                    mask_list.append(action_mask)
+                    action_list.append(action)
+                    log_prob_list.append(log_prob)
+                    value_list.append(value)
+                    reward_list.append(reward)
+                    done_list.append(terminated or truncated)
 
-                obs = next_obs
-                action_mask = next_mask
+                    obs = next_obs
+                    action_mask = next_mask
+
+                    pbar.set_postfix(
+                        {
+                            "reward": f"{reward:.4f}",
+                            "raw_reward": f"{raw_reward:.4f}",
+                            "tot_reward": f"{sum(reward_list):.2f}",
+                        }
+                    )
+                    pbar.update(1)
 
             # GAE computation & PPO policy update
             advantages, returns = self.agent.compute_gae(reward_list, value_list, done_list)
@@ -103,9 +122,10 @@ class PPOOptimizer:
                 makespan,
                 tardiness,
                 setup_time,
-                weight_makespan=self.config.weight_makespan,
-                weight_tardiness=self.config.weight_tardiness,
-                weight_setup=self.config.weight_setup,
+                weight_makespan=self.obj_config.weight_makespan,
+                weight_tardiness=self.obj_config.weight_tardiness,
+                weight_setup=self.obj_config.weight_setup,
+                num_jobs=self.env.num_jobs,
             )
 
             if chromo.fitness < best_fitness:
@@ -113,6 +133,7 @@ class PPOOptimizer:
                 best_chromo = chromo
                 self.agent.save_model(self.config.model_checkpoint_path)
 
+            total_reward = sum(reward_list)
             history.append(
                 {
                     "episode": episode,
@@ -120,17 +141,43 @@ class PPOOptimizer:
                     "makespan": makespan,
                     "tardiness": tardiness,
                     "setup_time": setup_time,
-                    "total_reward": sum(reward_list),
+                    "total_reward": total_reward,
                     "policy_loss": losses["policy_loss"],
                     "value_loss": losses["value_loss"],
                 }
             )
 
             if episode % 20 == 0 or episode == self.config.num_episodes:
-                print(
+                # Deterministic evaluation rollout to measure true policy quality
+                eval_obs, eval_info = self.env.reset()
+                eval_mask = eval_info["action_mask"]
+                eval_done = False
+                while not eval_done:
+                    act, _, _ = self.agent.select_action(eval_obs, eval_mask, deterministic=True)
+                    eval_obs, _, term, trunc, eval_info = self.env.step(act)
+                    eval_mask = eval_info["action_mask"]
+                    eval_done = term or trunc
+
+                eval_chromo = self.env.get_chromosome()
+                if self.config.use_numba and hasattr(self, "numba_decoder"):
+                    e_ms, e_tard, e_setup = self.numba_decoder.decode_fitness(eval_chromo)
+                else:
+                    _, e_ms, e_tard, e_setup, _ = self.decoder.decode(eval_chromo)
+
+                eval_fitness = compute_weighted_fitness(
+                    e_ms,
+                    e_tard,
+                    e_setup,
+                    weight_makespan=self.obj_config.weight_makespan,
+                    weight_tardiness=self.obj_config.weight_tardiness,
+                    weight_setup=self.obj_config.weight_setup,
+                    num_jobs=self.env.num_jobs,
+                )
+
+                tqdm.write(
                     f"Episode {episode}/{self.config.num_episodes} - "
-                    f"Best Fitness: {best_fitness:.2f} (Curr Fitness: {chromo.fitness:.2f}, "
-                    f"Makespan: {makespan:.1f}m, Tardiness: {tardiness:.1f}m, Setup: {setup_time:.1f}m)"
+                    f"Eval Fitness: {eval_fitness:.2f} (Makespan: {e_ms:.1f}m, Tardiness: {e_tard:.1f}m) | "
+                    f"Best: {best_fitness:.2f} (Train Stochastic: {chromo.fitness:.2f})"
                 )
 
         return best_chromo, history
@@ -171,9 +218,10 @@ class PPOOptimizer:
                 makespan,
                 tardiness,
                 setup_time,
-                weight_makespan=self.config.weight_makespan,
-                weight_tardiness=self.config.weight_tardiness,
-                weight_setup=self.config.weight_setup,
+                weight_makespan=self.obj_config.weight_makespan,
+                weight_tardiness=self.obj_config.weight_tardiness,
+                weight_setup=self.obj_config.weight_setup,
+                num_jobs=self.env.num_jobs,
             )
 
             if chromo.fitness < best_fitness:
@@ -208,7 +256,7 @@ class PPOOptimizer:
         on_time_rate = round((len(tardy_map) - tardy_jobs) / len(tardy_map) * 100, 1)
 
         metrics = {
-            "name": "PPO Deep Reinforcement Learning (Proposed DRL)",
+            "name": "PPO",
             "makespan": makespan,
             "total_weighted_tardiness": tardiness,
             "total_setup_time": setup_time,

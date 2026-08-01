@@ -1,11 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 
 @dataclass
 class Chromosome:
     os: List[int]  # Job indices sequence (each job index appears len(steps) times)
-    ms: List[int]  # Selected tool index for each operation in sequence
+    ms: List[int] = field(default_factory=list)  # Selected tool index for each operation (optional if using greedy MS)
     fitness: float = float("inf")
     makespan: float = 0.0
     total_tardiness: float = 0.0

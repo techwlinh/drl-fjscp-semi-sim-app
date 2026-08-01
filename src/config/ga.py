@@ -14,10 +14,5 @@ class GAConfig(BaseModel):
     tournament_size: int = Field(default=3, description="Tournament selection size")
     elitism_count: int = Field(default=2, description="Top elite individuals to preserve")
 
-    # Fitness weight objectives
-    weight_makespan: float = Field(default=0.3)
-    weight_tardiness: float = Field(default=0.5)
-    weight_setup: float = Field(default=0.2)
-
     # Numba Acceleration
     use_numba: bool = Field(default=True, description="Enable Numba JIT acceleration for GA decoding")

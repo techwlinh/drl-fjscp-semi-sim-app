@@ -1,0 +1,24 @@
+{
+  "experiments": [
+    {
+      "algorithm": "ga",
+      "title": "GA Metaheuristic",
+      "rel_path": "/experiments/ga/schedule.json",
+      "makespan": 8120.36,
+      "tardiness": 400001.55,
+      "setup_time": 8503.97,
+      "fitness": 6136.91,
+      "scheduled_tasks": 6250
+    },
+    {
+      "algorithm": "ppo",
+      "title": "PPO",
+      "rel_path": "/experiments/ppo/schedule.json",
+      "makespan": 10593.57,
+      "tardiness": 601297.47,
+      "setup_time": 20935.7,
+      "fitness": 10371.7,
+      "scheduled_tasks": 6250
+    }
+  ]
+}

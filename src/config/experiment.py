@@ -3,9 +3,12 @@ from typing import Dict, List, Tuple
 from pydantic import BaseModel, Field
 
 
-# ----------------------------------------------------------------------
-# Data Generator Configuration Model
-# ----------------------------------------------------------------------
+class ObjectiveConfig(BaseModel):
+    weight_makespan: float = Field(default=0.3, description="Weight for makespan penalty")
+    weight_tardiness: float = Field(default=0.5, description="Weight for tardiness penalty")
+    weight_setup: float = Field(default=0.2, description="Weight for setup time penalty")
+    weight_idle: float = Field(default=0.1, description="Weight for machine idle time penalty")
+
 class DataGenConfig(BaseModel):
     seed: int = Field(default=42, description="Random seed for reproducibility")
     num_jobs: int = Field(default=100, description="Total number of jobs at t=0")

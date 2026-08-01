@@ -8,6 +8,7 @@ from src.fab.decoder.fjsp import FJSPDecoder
 from src.fab.decoder.numba import NumbaFJSPDecoder
 from src.model.drl.ppo.config import PPOConfig
 from src.model.meta.ga.types import Chromosome, ScheduledTask
+from src.config.experiment import ObjectiveConfig
 
 
 class FJSPEnv(gym.Env):
@@ -21,6 +22,7 @@ class FJSPEnv(gym.Env):
         super().__init__()
         self.dataset = dataset
         self.config = config or PPOConfig()
+        self.obj_config = ObjectiveConfig()
         self.decoder = FJSPDecoder(dataset)
 
         if self.config.use_numba:
@@ -206,13 +208,14 @@ class FJSPEnv(gym.Env):
             delta_tardiness = weight * tardiness
             self.total_weighted_tardiness += delta_tardiness
 
-        # Dense Reward Calculation
-        reward = - (
-            self.config.weight_makespan * delta_makespan
-            + self.config.weight_setup * best_setup_time
-            + self.config.weight_tardiness * delta_tardiness
-            + self.config.weight_idle * (best_idle_time / 10.0)
+        # Scaled Dense Reward Calculation (Tardiness normalized per job)
+        raw_reward = - (
+            self.obj_config.weight_makespan * delta_makespan
+            + self.obj_config.weight_setup * best_setup_time
+            + self.obj_config.weight_tardiness * (delta_tardiness / self.num_jobs)
+            + self.obj_config.weight_idle * (best_idle_time / 10.0)
         )
+        reward = raw_reward / self.config.reward_scale
 
         terminated = self.scheduled_ops_count >= self.total_ops
         truncated = False
@@ -223,6 +226,7 @@ class FJSPEnv(gym.Env):
             "makespan": self.current_makespan,
             "total_setup_time": self.total_setup_time,
             "total_tardiness": self.total_weighted_tardiness,
+            "raw_reward": float(raw_reward),
         }
 
         return obs, float(reward), terminated, truncated, info

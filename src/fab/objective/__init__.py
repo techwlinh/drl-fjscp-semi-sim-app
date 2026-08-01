@@ -1,6 +1,6 @@
 from src.fab.objective.evaluator import (
     ObjectiveEvaluator,
-    ObjectiveWeights,
+    ObjectiveConfig,
     calculate_numba_makespan,
     calculate_numba_setup_cost,
     calculate_numba_weighted_tardiness,
@@ -11,7 +11,7 @@ from src.fab.objective.evaluator import (
 
 __all__ = [
     "ObjectiveEvaluator",
-    "ObjectiveWeights",
+    "ObjectiveConfig",
     "calculate_numba_makespan",
     "calculate_numba_setup_cost",
     "calculate_numba_weighted_tardiness",

@@ -32,69 +32,109 @@ def numba_decode_fitness(
     setup_mat: np.ndarray,
 ) -> Tuple[float, float, float]:
     """
-    Numba JIT compiled FJSP decoder.
+    Numba JIT compiled FJSP decoder using Active Insertion & Greedy EFT Machine Selection.
     Calculates makespan, total_weighted_tardiness, and total_setup_time at C-speed.
     """
+    max_intervals = len(os) + 2
+    intervals_start = np.zeros((num_tools, max_intervals), dtype=np.float64)
+    intervals_end = np.zeros((num_tools, max_intervals), dtype=np.float64)
+    intervals_recipe = np.zeros((num_tools, max_intervals), dtype=np.int32)
+    interval_counts = np.ones(num_tools, dtype=np.int32)
+
+    for t in range(num_tools):
+        intervals_recipe[t, 0] = tool_initial_recipe[t]
+
     job_step_count = np.zeros(num_jobs, dtype=np.int32)
     job_current_time = np.zeros(num_jobs, dtype=np.float64)
-    job_current_loc = np.zeros(num_jobs, dtype=np.int32)  # Index 0 is Central_Stockroom
-
-    tool_avail_time = np.zeros(num_tools, dtype=np.float64)
-    tool_curr_recipe = tool_initial_recipe.copy()
+    job_current_loc = np.zeros(num_jobs, dtype=np.int32)
 
     total_setup_time = 0.0
+    has_ms = len(ms) == len(op_nominal_proc_time)
 
     for i in range(len(os)):
         job_idx = os[i]
         step_seq_idx = job_step_count[job_idx]
         global_op_idx = job_op_start_idx[job_idx] + step_seq_idx
 
-        # 0. Tool selection from MS
         offset = valid_tools_offsets[global_op_idx]
         num_valid = valid_tools_counts[global_op_idx]
-        tool_choice_val = ms[global_op_idx]
-        selected_tool_idx = valid_tools_flat[offset + (tool_choice_val % num_valid)]
 
-        # 1. Transport Calculation
-        curr_loc = job_current_loc[job_idx]
-        target_ws_loc = tool_ws_idx[selected_tool_idx]
+        if has_ms:
+            eval_count = 1
+        else:
+            eval_count = num_valid
 
-        travel_time = 0.0
-        if curr_loc != target_ws_loc:
-            travel_time = transport_mat[curr_loc, target_ws_loc]
+        best_tool_idx = valid_tools_flat[offset]
+        best_finish_time = 1e18
+        best_setup_time = 0.0
+        best_insert_pos = 1
+        best_start_t = 0.0
 
-        transport_start = job_current_time[job_idx]
-        transport_end = transport_start + travel_time
-
-        # 2. Tool Availability & Setup Calculation
-        arrival_time = transport_end
-        tool_ready = tool_avail_time[selected_tool_idx]
-        tool_ready_time = arrival_time if arrival_time > tool_ready else tool_ready
-
-        prev_recipe = tool_curr_recipe[selected_tool_idx]
         curr_recipe = job_recipe_idx[job_idx]
+        proc_time = op_nominal_proc_time[global_op_idx]
         wsg_i = op_wsg_idx[global_op_idx]
 
-        setup_duration = 0.0
-        if prev_recipe != curr_recipe and prev_recipe >= 0 and curr_recipe >= 0:
-            setup_duration = setup_mat[wsg_i, prev_recipe, curr_recipe]
+        for v_idx in range(eval_count):
+            if has_ms:
+                tool_choice_val = ms[global_op_idx]
+                t_idx = valid_tools_flat[offset + (tool_choice_val % num_valid)]
+            else:
+                t_idx = valid_tools_flat[offset + v_idx]
 
-        setup_start = tool_ready_time
-        setup_end = setup_start + setup_duration
-        total_setup_time += setup_duration
+            target_ws_loc = tool_ws_idx[t_idx]
+            curr_loc = job_current_loc[job_idx]
+            travel_time = 0.0
+            if curr_loc != target_ws_loc:
+                travel_time = transport_mat[curr_loc, target_ws_loc]
 
-        # 3. Processing Calculation
-        proc_start = setup_end
-        proc_end = proc_start + op_nominal_proc_time[global_op_idx]
+            arrival_time = job_current_time[job_idx] + travel_time
+            n_int = interval_counts[t_idx]
 
-        # 4. State Updates
-        tool_avail_time[selected_tool_idx] = proc_end
-        tool_curr_recipe[selected_tool_idx] = curr_recipe
-        job_current_time[job_idx] = proc_end
+            for k in range(n_int):
+                prev_end = intervals_end[t_idx, k]
+                prev_rec = intervals_recipe[t_idx, k]
+
+                setup_duration = 0.0
+                if prev_rec != curr_recipe and prev_rec >= 0 and curr_recipe >= 0:
+                    setup_duration = setup_mat[wsg_i, prev_rec, curr_recipe]
+
+                s_start = arrival_time if arrival_time > prev_end else prev_end
+                s_end = s_start + setup_duration
+                p_end = s_end + proc_time
+
+                if k + 1 < n_int:
+                    next_start = intervals_start[t_idx, k + 1]
+                    next_rec = intervals_recipe[t_idx, k + 1]
+                    next_setup_dur = 0.0
+                    if curr_recipe != next_rec and curr_recipe >= 0 and next_rec >= 0:
+                        next_setup_dur = setup_mat[wsg_i, curr_recipe, next_rec]
+                    if p_end + next_setup_dur > next_start:
+                        continue
+
+                if p_end < best_finish_time:
+                    best_finish_time = p_end
+                    best_tool_idx = t_idx
+                    best_setup_time = setup_duration
+                    best_insert_pos = k + 1
+                    best_start_t = s_start
+
+        n_int = interval_counts[best_tool_idx]
+        for k in range(n_int, best_insert_pos, -1):
+            intervals_start[best_tool_idx, k] = intervals_start[best_tool_idx, k - 1]
+            intervals_end[best_tool_idx, k] = intervals_end[best_tool_idx, k - 1]
+            intervals_recipe[best_tool_idx, k] = intervals_recipe[best_tool_idx, k - 1]
+
+        intervals_start[best_tool_idx, best_insert_pos] = best_start_t
+        intervals_end[best_tool_idx, best_insert_pos] = best_finish_time
+        intervals_recipe[best_tool_idx, best_insert_pos] = curr_recipe
+        interval_counts[best_tool_idx] += 1
+
+        total_setup_time += best_setup_time
+        target_ws_loc = tool_ws_idx[best_tool_idx]
+        job_current_time[job_idx] = best_finish_time
         job_current_loc[job_idx] = target_ws_loc
         job_step_count[job_idx] += 1
 
-    # Calculate Objectives using src.fab.objective functions
     makespan = calculate_numba_makespan(job_current_time)
     total_weighted_tardiness = calculate_numba_weighted_tardiness(
         job_current_time, job_due_dates, job_priority_weights

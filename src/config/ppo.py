@@ -25,10 +25,7 @@ class PPOConfig(BaseModel):
     ppo_epochs: int = Field(default=5, description="Number of PPO optimization epochs per update")
 
     # Reward shaping weights
-    weight_makespan: float = Field(default=0.3, description="Weight for makespan penalty")
-    weight_tardiness: float = Field(default=0.5, description="Weight for tardiness penalty")
-    weight_setup: float = Field(default=0.2, description="Weight for setup time penalty")
-    weight_idle: float = Field(default=0.1, description="Weight for machine idle time penalty")
+    reward_scale: float = Field(default=1000.0, description="Scaling factor for step rewards to stabilize gradients")
 
     # Numba JIT Acceleration
     use_numba: bool = Field(default=True, description="Enable Numba acceleration for state transitions")

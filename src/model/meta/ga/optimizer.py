@@ -31,18 +31,10 @@ class GAOptimizer:
             self.os_template.extend([j_idx] * num_steps)
 
     def create_individual(self) -> Chromosome:
-        """Create a random feasible individual (OS + MS)."""
+        """Create a random feasible individual (OS-only, machine selection handled by Active Greedy Decoder)."""
         os = self.os_template.copy()
         random.shuffle(os)
-
-        ms = [
-            random.randint(0, len(op["valid_tools"]) - 1)
-            if op["valid_tools"]
-            else 0
-            for op in self.op_info
-        ]
-
-        return Chromosome(os=os, ms=ms)
+        return Chromosome(os=os, ms=[])
 
     def evaluate(self, chromo: Chromosome) -> float:
         """Evaluate chromosome and compute weighted fitness score."""
@@ -62,10 +54,9 @@ class GAOptimizer:
             weight_makespan=self.config.weight_makespan,
             weight_tardiness=self.config.weight_tardiness,
             weight_setup=self.config.weight_setup,
+            num_jobs=self.num_jobs,
         )
         return chromo.fitness
-
-
 
     def tournament_selection(self, pop: List[Chromosome]) -> Chromosome:
         """Tournament selection."""
@@ -106,37 +97,12 @@ class GAOptimizer:
 
         return off1_os, off2_os
 
-    def ms_crossover(self, parent1: Chromosome, parent2: Chromosome) -> Tuple[List[int], List[int]]:
-        """Uniform Crossover for Machine Selection MS."""
-        off1_ms = []
-        off2_ms = []
-
-        for i in range(len(parent1.ms)):
-            if random.random() < 0.5:
-                off1_ms.append(parent1.ms[i])
-                off2_ms.append(parent2.ms[i])
-            else:
-                off1_ms.append(parent2.ms[i])
-                off2_ms.append(parent1.ms[i])
-
-        return off1_ms, off2_ms
-
     def mutate_os(self, os: List[int]) -> List[int]:
         """Swap mutation for OS."""
         mutated = os.copy()
         if random.random() < self.config.mutation_rate and len(mutated) >= 2:
             i, j = random.sample(range(len(mutated)), 2)
             mutated[i], mutated[j] = mutated[j], mutated[i]
-        return mutated
-
-    def mutate_ms(self, ms: List[int]) -> List[int]:
-        """Random re-assignment mutation for MS."""
-        mutated = ms.copy()
-        for i in range(len(mutated)):
-            if random.random() < self.config.mutation_rate:
-                num_valid = len(self.op_info[i]["valid_tools"])
-                if num_valid > 1:
-                    mutated[i] = random.randint(0, num_valid - 1)
         return mutated
 
     def run(self) -> Tuple[Chromosome, List[ScheduledTask], List[dict]]:
@@ -178,18 +144,15 @@ class GAOptimizer:
 
                 if random.random() < self.config.crossover_rate:
                     off1_os, off2_os = self.pox_crossover(p1, p2)
-                    off1_ms, off2_ms = self.ms_crossover(p1, p2)
                 else:
-                    off1_os, off1_ms = p1.os.copy(), p1.ms.copy()
-                    off2_os, off2_ms = p2.os.copy(), p2.ms.copy()
+                    off1_os = p1.os.copy()
+                    off2_os = p2.os.copy()
 
                 off1_os = self.mutate_os(off1_os)
-                off1_ms = self.mutate_ms(off1_ms)
                 off2_os = self.mutate_os(off2_os)
-                off2_ms = self.mutate_ms(off2_ms)
 
-                child1 = Chromosome(os=off1_os, ms=off1_ms)
-                child2 = Chromosome(os=off2_os, ms=off2_ms)
+                child1 = Chromosome(os=off1_os, ms=[])
+                child2 = Chromosome(os=off2_os, ms=[])
 
                 self.evaluate(child1)
                 self.evaluate(child2)
