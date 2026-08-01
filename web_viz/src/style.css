@@ -624,11 +624,13 @@ body {
 
 .ruler-tick {
   border-left: 1px solid var(--border-glass);
-  padding: 10px 6px;
-  font-size: 10px;
+  padding: 10px 8px;
+  font-size: 11px;
   color: var(--text-muted);
   font-weight: 500;
   white-space: nowrap;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .timeline-body {

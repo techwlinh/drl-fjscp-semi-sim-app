@@ -36,7 +36,11 @@ def update_experiments_manifest(workspace_root: Path) -> None:
             heuristic_comps = data.get("heuristic_comparisons", {})
 
             alg_name = subfolder.name.upper()
-            model_title = f"{alg_name} Schedule"
+            if subfolder.name.startswith("ppo_"):
+                strat_title = subfolder.name.replace("ppo_", "").replace("_", " ").title()
+                model_title = f"PPO ({strat_title})"
+            else:
+                model_title = f"{alg_name} Schedule"
             fit_val = kpis.get("fitness", 0.0)
 
             if subfolder.name in heuristic_comps:
@@ -54,6 +58,8 @@ def update_experiments_manifest(workspace_root: Path) -> None:
                     "setup_time": kpis.get("total_setup_time", 0.0),
                     "fitness": fit_val,
                     "scheduled_tasks": kpis.get("total_scheduled_tasks", 0),
+                    "on_time_rate_percent": kpis.get("on_time_rate_percent", 0.0),
+                    "avg_tool_utilization_percent": kpis.get("avg_tool_utilization_percent", 0.0),
                 }
             )
         except Exception:
@@ -121,6 +127,7 @@ def export_schedule_results(
 
     export_payload = {
         "kpis": {
+            "fitness": best_chromo.fitness,
             "makespan": best_chromo.makespan,
             "total_weighted_tardiness": best_chromo.total_tardiness,
             "total_setup_time": best_chromo.total_setup_time,

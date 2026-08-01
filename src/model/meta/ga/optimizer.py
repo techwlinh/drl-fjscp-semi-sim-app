@@ -7,13 +7,14 @@ from src.fab.decoder.numba import NumbaFJSPDecoder
 from src.fab.objective import compute_weighted_fitness
 from src.model.meta.ga.config import GAConfig
 from src.model.meta.ga.types import Chromosome, ScheduledTask
-
+from src.config.experiment import ObjectiveConfig
 
 
 class GAOptimizer:
     def __init__(self, dataset: DatasetOutputModel, config: GAConfig):
         self.dataset = dataset
         self.config = config
+        self.obj_config = ObjectiveConfig()
         self.decoder = FJSPDecoder(dataset)
 
         if self.config.use_numba:
@@ -51,9 +52,9 @@ class GAOptimizer:
             makespan,
             tardiness,
             setup_time,
-            weight_makespan=self.config.weight_makespan,
-            weight_tardiness=self.config.weight_tardiness,
-            weight_setup=self.config.weight_setup,
+            weight_makespan=self.obj_config.weight_makespan,
+            weight_tardiness=self.obj_config.weight_tardiness,
+            weight_setup=self.obj_config.weight_setup,
             num_jobs=self.num_jobs,
         )
         return chromo.fitness

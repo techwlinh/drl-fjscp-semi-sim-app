@@ -531,17 +531,22 @@ function renderGanttChart() {
     sidebarRows.appendChild(div);
   });
 
-  // 2. Render Timeline Ruler with Dynamic Tick Interval
+  // 2. Render Timeline Ruler with Adaptive Non-Overlapping Tick Interval
   timelineRuler.innerHTML = "";
   const totalWidthPx = maxTime * pxPerMin + 250;
   timelineRuler.style.width = `${totalWidthPx}px`;
 
-  let tickIntervalMins = 60;
-  if (currentZoom < 0.5) tickIntervalMins = 240;
-  else if (currentZoom < 0.8) tickIntervalMins = 120;
-  else if (currentZoom < 1.4) tickIntervalMins = 60;
-  else if (currentZoom < 2.2) tickIntervalMins = 30;
-  else tickIntervalMins = 15;
+  // Ensure ruler tick labels have at least 160px spacing to prevent overlap
+  const MIN_TICK_PIXELS = 160;
+  const candidateIntervals = [30, 60, 120, 180, 240, 360, 480, 720, 1440, 2880, 5760, 10080];
+  let tickIntervalMins = 360;
+  for (const candidate of candidateIntervals) {
+    if (candidate * pxPerMin >= MIN_TICK_PIXELS) {
+      tickIntervalMins = candidate;
+      break;
+    }
+    tickIntervalMins = candidate;
+  }
 
   const tickWidthPx = tickIntervalMins * pxPerMin;
   for (let t = 0; t <= maxTime + tickIntervalMins; t += tickIntervalMins) {
@@ -549,7 +554,7 @@ function renderGanttChart() {
     tick.className = "ruler-tick";
     tick.style.width = `${tickWidthPx}px`;
     const hours = (t / 60).toFixed(0);
-    tick.textContent = `${t}m (${hours}h)`;
+    tick.textContent = t === 0 ? "0m" : `${t}m (${hours}h)`;
     timelineRuler.appendChild(tick);
   }
 
@@ -754,48 +759,73 @@ function positionTooltip(e) {
 }
 
 // ----------------------------------------------------------------------
-// TAB 2: Render Progress Section SVG Charts
+// TAB 2: Render Progress Section SVG Charts (Dynamic Multi-Strategy)
 // ----------------------------------------------------------------------
+const STRATEGY_COLORS = {
+  ga: "#8b5cf6",
+  ppo_continuous_tardiness: "#10b981",
+  ppo_pbrs: "#06b6d4",
+  ppo_baseline: "#f59e0b",
+  ppo_milestone_progress: "#ec4899",
+  ppo_workload_balance: "#3b82f6",
+  ppo: "#10b981",
+};
+
 async function renderProgressSection(currentHistory) {
-  let gaHistory = currentHistory || [];
-  let ppoHistory = [];
-
-  try {
-    const gaRes = await fetch("/experiments/ga/schedule.json");
-    if (gaRes.ok) {
-      const gaData = await gaRes.json();
-      if (gaData.history && gaData.history.length > 0) gaHistory = gaData.history;
-    }
-  } catch (e) {}
-
-  try {
-    const ppoRes = await fetch("/experiments/ppo/schedule.json");
-    if (ppoRes.ok) {
-      const ppoData = await ppoRes.json();
-      if (ppoData.history && ppoData.history.length > 0) ppoHistory = ppoData.history;
-    }
-  } catch (e) {}
-
-  const initFitness = gaHistory.length ? gaHistory[0].fitness : (ppoHistory.length ? ppoHistory[0].fitness : "--");
-  const bestGaFit = gaHistory.length ? gaHistory[gaHistory.length - 1].fitness : "--";
-  const bestPpoFit = ppoHistory.length ? ppoHistory[ppoHistory.length - 1].fitness : "--";
-
-  const bestFitness = (typeof bestPpoFit === "number" && typeof bestGaFit === "number")
-    ? Math.min(bestGaFit, bestPpoFit)
-    : (typeof bestPpoFit === "number" ? bestPpoFit : (typeof bestGaFit === "number" ? bestGaFit : "--"));
-
-  document.getElementById("prog-init-fitness").textContent = typeof initFitness === "number" ? initFitness.toLocaleString() : "--";
-  document.getElementById("prog-best-fitness").textContent = typeof bestFitness === "number" ? bestFitness.toLocaleString() : "--";
-  document.getElementById("prog-improvement").textContent = (typeof bestPpoFit === "number" && typeof bestGaFit === "number") ? `PPO: ${bestPpoFit.toLocaleString()}` : "--";
-  document.getElementById("prog-generations").textContent = `GA: ${gaHistory.length} Gen | PPO: ${ppoHistory.length} Ep`;
-
   const seriesFitness = [];
-  if (gaHistory.length > 0) seriesFitness.push({ label: "🧬 GA Metaheuristic", data: gaHistory, key: "fitness", color: "#8b5cf6" });
-  if (ppoHistory.length > 0) seriesFitness.push({ label: "🤖 PPO Reinforcement Learning", data: ppoHistory, key: "fitness", color: "#10b981" });
-
   const seriesMakespan = [];
-  if (gaHistory.length > 0) seriesMakespan.push({ label: "🧬 GA Makespan", data: gaHistory, key: "makespan", color: "#3b82f6" });
-  if (ppoHistory.length > 0) seriesMakespan.push({ label: "🤖 PPO Makespan", data: ppoHistory, key: "makespan", color: "#06b6d4" });
+  let globalBestFit = null;
+  let allHistories = [];
+
+  try {
+    const manifestRes = await fetch("/experiments/manifest.json");
+    if (manifestRes.ok) {
+      const manifestData = await manifestRes.json();
+      const experiments = manifestData.experiments || [];
+
+      for (const item of experiments) {
+        try {
+          const res = await fetch(item.rel_path);
+          if (!res.ok) continue;
+          const data = await res.json();
+          const hist = data.history || [];
+
+          if (hist.length > 0) {
+            const algKey = item.algorithm.toLowerCase();
+            const color = STRATEGY_COLORS[algKey] || getProductStyle(item.algorithm).color;
+            const label = item.title || item.algorithm.toUpperCase();
+
+            seriesFitness.push({ label, data: hist, key: "fitness", color });
+            seriesMakespan.push({ label, data: hist, key: "makespan", color });
+
+            const lastFit = hist[hist.length - 1].fitness;
+            if (globalBestFit === null || lastFit < globalBestFit) {
+              globalBestFit = lastFit;
+            }
+            allHistories.push(`${item.algorithm.toUpperCase()}: ${hist.length}`);
+          }
+        } catch (err) {
+          console.warn("Could not load history for", item.rel_path, err);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to load experiments manifest for progress section", e);
+  }
+
+  // Fallback to passed currentHistory if manifest had no history items
+  if (seriesFitness.length === 0 && currentHistory && currentHistory.length > 0) {
+    seriesFitness.push({ label: "Current Run Progress", data: currentHistory, key: "fitness", color: "#10b981" });
+    seriesMakespan.push({ label: "Current Run Makespan", data: currentHistory, key: "makespan", color: "#3b82f6" });
+    globalBestFit = currentHistory[currentHistory.length - 1].fitness;
+  }
+
+  const initFit = seriesFitness.length > 0 && seriesFitness[0].data.length > 0 ? seriesFitness[0].data[0].fitness : "--";
+
+  document.getElementById("prog-init-fitness").textContent = typeof initFit === "number" ? initFit.toLocaleString() : "--";
+  document.getElementById("prog-best-fitness").textContent = typeof globalBestFit === "number" ? globalBestFit.toLocaleString() : "--";
+  document.getElementById("prog-improvement").textContent = seriesFitness.length ? `${seriesFitness.length} Strategies` : "--";
+  document.getElementById("prog-generations").textContent = allHistories.length ? allHistories.join(" | ") : "No History Data";
 
   renderMultiLineChart("chart-fitness", seriesFitness, "Fitness Convergence");
   renderMultiLineChart("chart-makespan-tardiness", seriesMakespan, "Makespan Progression (mins)");
@@ -878,16 +908,43 @@ function renderMultiLineChart(containerId, seriesList, labelName) {
 // ----------------------------------------------------------------------
 // TAB 3: Render Benchmark Section Table & Bar Cards
 // ----------------------------------------------------------------------
-function renderBenchmarkSection(heuristicComparisons) {
+// TAB 3: Render Benchmark Section Table & Bar Cards (Dynamic Multi-Algorithm)
+// ----------------------------------------------------------------------
+async function renderBenchmarkSection(heuristicComparisons) {
   const tbody = document.getElementById("benchmark-table-body");
   const cardsGrid = document.getElementById("comparison-cards");
 
-  if (!heuristicComparisons || Object.keys(heuristicComparisons).length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;">No heuristic benchmark data available. Run main.py again.</td></tr>`;
+  let mergedMap = { ...(heuristicComparisons || {}) };
+
+  try {
+    const manifestRes = await fetch("/experiments/manifest.json");
+    if (manifestRes.ok) {
+      const manifestData = await manifestRes.json();
+      const experiments = manifestData.experiments || [];
+
+      for (const item of experiments) {
+        const key = item.algorithm;
+        mergedMap[key] = {
+          name: item.title || item.algorithm.toUpperCase(),
+          fitness: Number(item.fitness || 0),
+          makespan: Number(item.makespan || 0),
+          total_weighted_tardiness: Number(item.tardiness || 0),
+          total_setup_time: Number(item.setup_time || 0),
+          on_time_rate_percent: item.on_time_rate_percent !== undefined ? item.on_time_rate_percent : 0,
+          avg_tool_utilization_percent: item.avg_tool_utilization_percent !== undefined ? item.avg_tool_utilization_percent : 0,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn("Could not load experiments manifest for benchmark tab", e);
+  }
+
+  if (Object.keys(mergedMap).length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;">No benchmark data available. Run run_reward_comparison.py.</td></tr>`;
     return;
   }
 
-  const entries = Object.entries(heuristicComparisons).map(([key, data]) => ({ key, ...data }));
+  const entries = Object.entries(mergedMap).map(([key, data]) => ({ key, ...data }));
   entries.sort((a, b) => a.fitness - b.fitness);
 
   const minFitness = Math.min(...entries.map((e) => e.fitness));

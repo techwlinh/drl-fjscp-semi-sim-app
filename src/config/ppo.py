@@ -17,14 +17,18 @@ class PPOConfig(BaseModel):
     gae_lambda: float = Field(default=0.95, description="GAE lambda parameter")
     clip_eps: float = Field(default=0.2, description="PPO clipping epsilon parameter")
     c_value: float = Field(default=0.5, description="Value loss coefficient")
-    c_entropy: float = Field(default=0.01, description="Entropy regularization coefficient")
+    c_entropy: float = Field(default=0.05, description="Entropy regularization coefficient")
 
     # Training control
     num_episodes: int = Field(default=300, description="Total training episodes")
-    batch_size: int = Field(default=64, description="Minibatch size for PPO updates")
-    ppo_epochs: int = Field(default=5, description="Number of PPO optimization epochs per update")
+    batch_size: int = Field(default=256, description="Minibatch size for PPO updates")
+    ppo_epochs: int = Field(default=3, description="Number of PPO optimization epochs per update")
 
-    # Reward shaping weights
+    # Reward shaping options
+    reward_strategy: str = Field(
+        default="continuous_tardiness",
+        description="Reward strategy: 'baseline', 'continuous_tardiness', 'pbrs', 'milestone_progress', 'workload_balance'",
+    )
     reward_scale: float = Field(default=1000.0, description="Scaling factor for step rewards to stabilize gradients")
 
     # Numba JIT Acceleration

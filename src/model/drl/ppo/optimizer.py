@@ -96,7 +96,6 @@ class PPOOptimizer:
                     pbar.set_postfix(
                         {
                             "reward": f"{reward:.4f}",
-                            "raw_reward": f"{raw_reward:.4f}",
                             "tot_reward": f"{sum(reward_list):.2f}",
                         }
                     )
@@ -180,6 +179,7 @@ class PPOOptimizer:
                     f"Best: {best_fitness:.2f} (Train Stochastic: {chromo.fitness:.2f})"
                 )
 
+        self.history = history
         return best_chromo, history
 
     def predict(self, num_samples: int = 15) -> Tuple[Chromosome, List[ScheduledTask], dict]:

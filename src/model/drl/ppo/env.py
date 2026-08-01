@@ -9,6 +9,7 @@ from src.fab.decoder.numba import NumbaFJSPDecoder
 from src.model.drl.ppo.config import PPOConfig
 from src.model.meta.ga.types import Chromosome, ScheduledTask
 from src.config.experiment import ObjectiveConfig
+from src.model.drl.ppo.reward import get_reward_strategy
 
 
 class FJSPEnv(gym.Env):
@@ -65,6 +66,9 @@ class FJSPEnv(gym.Env):
         self.os_sequence: List[int] = []
         self.ms_sequence: List[int] = []
 
+        # Reward strategy instance
+        self.reward_strategy = get_reward_strategy(self.config.reward_strategy, self)
+
     def reset(
         self, seed: int = None, options: Dict[str, Any] = None
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
@@ -86,6 +90,8 @@ class FJSPEnv(gym.Env):
 
         self.os_sequence = []
         self.ms_sequence = [-1] * self.total_ops
+
+        self.reward_strategy.reset()
 
         obs = self._get_observation()
         info = {"action_mask": self.get_action_mask()}
@@ -115,16 +121,21 @@ class FJSPEnv(gym.Env):
             slack = float(self.job_due_dates[j_idx]) - (curr_time + rem_proc)
             weight = float(self.job_weights[j_idx])
 
-            job_feats.extend([prog_ratio, rem_proc / 100.0, slack / 100.0, weight])
+            job_feats.extend([
+                prog_ratio,
+                rem_proc / 5000.0,
+                np.clip(slack / 20000.0, -2.0, 2.0),
+                weight / 10.0,
+            ])
 
         tool_feats = []
         for t_id in self.tool_ids:
-            avail = self.tool_available_times[t_id] / 100.0
+            avail = self.tool_available_times[t_id] / 20000.0
             rec = float(hash(self.tool_current_recipes[t_id]) % 100) / 100.0
             tool_feats.extend([avail, rec])
 
         global_feats = [
-            self.current_makespan / 100.0,
+            self.current_makespan / 20000.0,
             float(self.scheduled_ops_count) / float(self.total_ops),
         ]
 
@@ -198,24 +209,16 @@ class FJSPEnv(gym.Env):
         self.scheduled_ops_count += 1
         self.total_setup_time += best_setup_time
 
-        # Calculate incremental tardiness penalty if job completes final step
+        # Calculate reward via active Reward Strategy
         is_final_step = self.job_step_counts[job_idx] == self.job_total_steps[job_idx]
-        delta_tardiness = 0.0
-        if is_final_step:
-            due = self.job_due_dates[job_idx]
-            weight = self.job_weights[job_idx]
-            tardiness = max(0.0, float(best_finish_time) - due)
-            delta_tardiness = weight * tardiness
-            self.total_weighted_tardiness += delta_tardiness
-
-        # Scaled Dense Reward Calculation (Tardiness normalized per job)
-        raw_reward = - (
-            self.obj_config.weight_makespan * delta_makespan
-            + self.obj_config.weight_setup * best_setup_time
-            + self.obj_config.weight_tardiness * (delta_tardiness / self.num_jobs)
-            + self.obj_config.weight_idle * (best_idle_time / 10.0)
+        raw_reward, reward = self.reward_strategy.compute_reward(
+            job_idx=job_idx,
+            best_finish_time=best_finish_time,
+            delta_makespan=delta_makespan,
+            best_setup_time=best_setup_time,
+            best_idle_time=best_idle_time,
+            is_final_step=is_final_step,
         )
-        reward = raw_reward / self.config.reward_scale
 
         terminated = self.scheduled_ops_count >= self.total_ops
         truncated = False
