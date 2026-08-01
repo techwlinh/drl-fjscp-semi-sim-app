@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Semiconductor Fab FJSP Gantt Schedule Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Navbar -->
+      <header class="navbar">
+        <div class="brand">
+          <div class="logo-icon">⚡</div>
+          <div>
+            <h1>FabSched DRL/GA Simulation</h1>
+            <span class="subtitle">Semiconductor Fab FJSP Gantt Optimizer</span>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <button id="btn-theme-toggle" class="btn-theme">🌙 Dark Mode</button>
+          <label class="btn-file">
+            📁 Load JSON
+            <input type="file" id="file-input" accept=".json" hidden />
+          </label>
+          <button id="btn-reload" class="btn-primary">🔄 Reload Data</button>
+        </div>
+      </header>
+
+      <!-- Navigation Tabs -->
+      <nav class="nav-tabs">
+        <button class="tab-btn active" data-tab="tab-gantt">📊 Gantt Schedule View</button>
+        <button class="tab-btn" data-tab="tab-progress">📈 Optimization Progress</button>
+        <button class="tab-btn" data-tab="tab-benchmarks">⚔️ Heuristic Benchmarks & Stats</button>
+      </nav>
+
+      <!-- TAB 1: Gantt Schedule View -->
+      <div id="tab-gantt" class="tab-content active">
+        <!-- KPI Summary Header -->
+        <section class="kpi-grid">
+          <div class="kpi-card">
+            <span class="kpi-label">Makespan (C<sub>max</sub>)</span>
+            <div class="kpi-value" id="kpi-makespan">--</div>
+            <span class="kpi-sub" id="kpi-makespan-hours">-- hours</span>
+          </div>
+
+          <div class="kpi-card">
+            <span class="kpi-label">Total Weighted Tardiness</span>
+            <div class="kpi-value" id="kpi-tardiness">--</div>
+            <span class="kpi-sub" id="kpi-tardy-count">-- tardy jobs</span>
+          </div>
+
+          <div class="kpi-card">
+            <span class="kpi-label">On-Time Lot Rate</span>
+            <div class="kpi-value highlight-green" id="kpi-ontime">--%</div>
+            <span class="kpi-sub" id="kpi-total-jobs">-- total lots</span>
+          </div>
+
+          <div class="kpi-card">
+            <span class="kpi-label">Total Setup Overhead</span>
+            <div class="kpi-value warning-orange" id="kpi-setup">-- min</div>
+            <span class="kpi-sub">Sequence-Dependent</span>
+          </div>
+
+          <div class="kpi-card">
+            <span class="kpi-label">Avg Tool Utilization</span>
+            <div class="kpi-value" id="kpi-utilization">--%</div>
+            <span class="kpi-sub" id="kpi-total-tasks">-- scheduled tasks</span>
+          </div>
+        </section>
+
+        <!-- Filter Controls & Legend -->
+        <section class="controls-panel">
+          <div class="filters-row">
+            <div class="search-box">
+              <span class="search-icon">🔍</span>
+              <input type="text" id="search-job" placeholder="Search Job ID, Step, Tool, or Product..." />
+            </div>
+
+            <div class="select-box" title="Filter by Manufacturing Area">
+              <label for="filter-area">Area:</label>
+              <select id="filter-area">
+                <option value="ALL">All Areas</option>
+              </select>
+            </div>
+
+            <div class="select-box" title="Filter by Product Type">
+              <label for="filter-product">Product:</label>
+              <select id="filter-product">
+                <option value="ALL">All Products</option>
+              </select>
+            </div>
+
+            <div class="select-box" title="Filter by Lot Priority">
+              <label for="filter-priority">Priority:</label>
+              <select id="filter-priority">
+                <option value="ALL">All Priorities</option>
+                <option value="Super_Hot">Super Hot Only</option>
+                <option value="Hot">Hot Only</option>
+                <option value="Regular">Regular Only</option>
+              </select>
+            </div>
+
+            <div class="select-box" title="Gantt Row Grouping">
+              <label for="group-mode">Grouping:</label>
+              <select id="group-mode">
+                <option value="ws">Group by Workstation</option>
+                <option value="wsg">Group by Workstation Group</option>
+                <option value="tool">Flat Tool View</option>
+              </select>
+            </div>
+
+            <div class="select-box" title="Timeline Detail Level">
+              <label for="detail-level">Detail:</label>
+              <select id="detail-level">
+                <option value="full">Full (Tasks + Setup + Transport)</option>
+                <option value="compact">Tasks Only (Clean View)</option>
+              </select>
+            </div>
+
+            <div class="zoom-box">
+              <label for="zoom-slider">Zoom: <span id="zoom-val">1.0x</span></label>
+              <input type="range" id="zoom-slider" min="0.3" max="3.0" step="0.1" value="1.0" />
+            </div>
+          </div>
+
+          <!-- Dynamic Legend & Product Filter Bar -->
+          <div class="legend-panel">
+            <div class="legend-title">
+              <span>🏷️ Products (Click chip to filter):</span>
+              <button id="btn-reset-product-filter" class="btn-text-reset hidden">Show All Products</button>
+            </div>
+            <div id="dynamic-legend" class="legend-chips">
+              <!-- Dynamically populated product badges -->
+            </div>
+            <div class="legend-static-items">
+              <div class="legend-item"><span class="swatch setup-block"></span> SDST Setup</div>
+              <div class="legend-item"><span class="swatch amhs-block"></span> AMHS Transport</div>
+              <div class="legend-item"><span class="badge super-hot">SUPER HOT</span></div>
+              <div class="legend-item"><span class="badge hot">HOT</span></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Gantt Chart Container -->
+        <main class="gantt-wrapper">
+          <div class="gantt-sidebar" id="gantt-sidebar">
+            <div class="sidebar-header">
+              <span id="sidebar-header-title">Hierarchy / Workstation</span>
+              <button id="btn-toggle-collapse" class="btn-collapse" title="Toggle Expand/Collapse All">↕️</button>
+            </div>
+            <div id="sidebar-rows"></div>
+          </div>
+
+          <div class="gantt-timeline-container" id="gantt-timeline-container">
+            <div class="timeline-ruler" id="timeline-ruler"></div>
+            <div class="timeline-body" id="timeline-body"></div>
+          </div>
+        </main>
+      </div>
+
+      <!-- TAB 2: Optimization Progress View -->
+      <div id="tab-progress" class="tab-content">
+        <section class="progress-section">
+          <div class="section-header">
+            <h2>📈 Genetic Algorithm Convergence & Progression</h2>
+            <p>Track objective fitness score reduction, makespan, and tardiness across generations.</p>
+          </div>
+
+          <div class="progress-kpi-grid">
+            <div class="progress-kpi-card">
+              <span class="p-label">Initial Fitness (Gen 0)</span>
+              <div class="p-val" id="prog-init-fitness">--</div>
+            </div>
+            <div class="progress-kpi-card">
+              <span class="p-label">Best Fitness Achieved</span>
+              <div class="p-val highlight-green" id="prog-best-fitness">--</div>
+            </div>
+            <div class="progress-kpi-card">
+              <span class="p-label">Objective Improvement</span>
+              <div class="p-val highlight-blue" id="prog-improvement">--%</div>
+            </div>
+            <div class="progress-kpi-card">
+              <span class="p-label">Total Generations</span>
+              <div class="p-val" id="prog-generations">--</div>
+            </div>
+          </div>
+
+          <div class="chart-grid">
+            <div class="chart-card">
+              <h3>Objective Fitness Score Convergence</h3>
+              <div class="chart-container" id="chart-fitness"></div>
+            </div>
+            <div class="chart-card">
+              <h3>Makespan (C<sub>max</sub>) & Total Tardiness Progression</h3>
+              <div class="chart-container" id="chart-makespan-tardiness"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- TAB 3: Heuristic Benchmarks & Stats -->
+      <div id="tab-benchmarks" class="tab-content">
+        <section class="benchmarks-section">
+          <div class="section-header">
+            <h2>⚔️ Strategy Comparison & Benchmark Statistics</h2>
+            <p>Evaluating GA Metaheuristic against 4 Classic Dispatching Heuristics (FIFO, EDD, SPT, Priority CR).</p>
+          </div>
+
+          <div class="table-card">
+            <table class="benchmark-table">
+              <thead>
+                <tr>
+                  <th>Strategy / Algorithm</th>
+                  <th>Fitness Score</th>
+                  <th>Makespan (C<sub>max</sub>)</th>
+                  <th>Weighted Tardiness</th>
+                  <th>Setup Time</th>
+                  <th>On-Time Rate %</th>
+                  <th>Tool Utilization %</th>
+                  <th>Performance Rank</th>
+                </tr>
+              </thead>
+              <tbody id="benchmark-table-body">
+                <tr><td colspan="8" style="text-align:center;">Loading benchmark data...</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="comparison-cards-grid" id="comparison-cards"></div>
+        </section>
+      </div>
+
+      <!-- Tooltip -->
+      <div id="tooltip" class="tooltip hidden"></div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
