@@ -2,7 +2,8 @@ import random
 from typing import List, Tuple
 
 from src.schema.data import DatasetOutputModel
-from src.fab.decoder import FJSPDecoder, NumbaFJSPDecoder
+from src.fab.decoder.fjsp import FJSPDecoder
+from src.fab.decoder.numba import NumbaFJSPDecoder
 from src.fab.objective import compute_weighted_fitness
 from src.model.meta.ga.config import GAConfig
 from src.model.meta.ga.types import Chromosome, ScheduledTask

@@ -91,22 +91,44 @@ tabButtons.forEach((btn) => {
   });
 });
 
+const selectModel = document.getElementById("select-model");
+
 // Load Experiments Manifest for Dropdown Selector
 async function loadExperimentsManifest() {
-  if (!selectExperiment) return;
+  // Default model options pointing to experiments subfolders
+  if (selectModel) {
+    selectModel.innerHTML = `
+      <option value="/experiments/ppo/schedule.json">🤖 PPO Deep Reinforcement Learning</option>
+      <option value="/experiments/ga/schedule.json">🧬 GA Metaheuristic</option>
+    `;
+  }
+
   try {
-    const res = await fetch("/experiments_manifest.json");
+    const res = await fetch("/experiments/manifest.json");
     if (!res.ok) return;
     const manifest = await res.json();
     if (!manifest.experiments || !Array.isArray(manifest.experiments)) return;
 
-    selectExperiment.innerHTML = `<option value="/ga_schedule_results.json">Latest Run (Default)</option>`;
-    manifest.experiments.forEach((exp) => {
-      const opt = document.createElement("option");
-      opt.value = `/experiments/${exp.filename}`;
-      opt.textContent = `${exp.filename} (Fit: ${exp.fitness})`;
-      selectExperiment.appendChild(opt);
-    });
+    // Rebuild model selector from manifest
+    if (selectModel) {
+      selectModel.innerHTML = "";
+      manifest.experiments.forEach((exp) => {
+        const opt = document.createElement("option");
+        opt.value = exp.rel_path || `/experiments/${exp.algorithm}/schedule.json`;
+        opt.textContent = `${exp.title || exp.algorithm.toUpperCase()} (Fit: ${Number(exp.fitness).toFixed(0)})`;
+        selectModel.appendChild(opt);
+      });
+    }
+
+    if (selectExperiment) {
+      selectExperiment.innerHTML = "";
+      manifest.experiments.forEach((exp) => {
+        const opt = document.createElement("option");
+        opt.value = exp.rel_path || `/experiments/${exp.algorithm}/schedule.json`;
+        opt.textContent = `${exp.title || exp.algorithm.toUpperCase()}`;
+        selectExperiment.appendChild(opt);
+      });
+    }
   } catch (err) {
     console.warn("Could not load experiments manifest:", err);
   }
@@ -114,7 +136,7 @@ async function loadExperimentsManifest() {
 
 // Load Initial / Selected Data
 async function loadData(url = null) {
-  const targetUrl = url || (selectExperiment ? selectExperiment.value : "/ga_schedule_results.json");
+  const targetUrl = url || (selectModel ? selectModel.value : "/experiments/ppo/schedule.json");
   try {
     const res = await fetch(targetUrl);
     if (!res.ok) throw new Error("Dataset file not found");
@@ -734,58 +756,106 @@ function positionTooltip(e) {
 // ----------------------------------------------------------------------
 // TAB 2: Render Progress Section SVG Charts
 // ----------------------------------------------------------------------
-function renderProgressSection(history) {
-  if (!history || history.length === 0) return;
+async function renderProgressSection(currentHistory) {
+  let gaHistory = currentHistory || [];
+  let ppoHistory = [];
 
-  const initFitness = history[0].fitness;
-  const bestFitness = history[history.length - 1].fitness;
-  const improvement = (((initFitness - bestFitness) / initFitness) * 100).toFixed(1);
+  try {
+    const gaRes = await fetch("/experiments/ga/schedule.json");
+    if (gaRes.ok) {
+      const gaData = await gaRes.json();
+      if (gaData.history && gaData.history.length > 0) gaHistory = gaData.history;
+    }
+  } catch (e) {}
 
-  document.getElementById("prog-init-fitness").textContent = initFitness.toLocaleString();
-  document.getElementById("prog-best-fitness").textContent = bestFitness.toLocaleString();
-  document.getElementById("prog-improvement").textContent = `-${improvement}%`;
-  document.getElementById("prog-generations").textContent = history.length - 1;
+  try {
+    const ppoRes = await fetch("/experiments/ppo/schedule.json");
+    if (ppoRes.ok) {
+      const ppoData = await ppoRes.json();
+      if (ppoData.history && ppoData.history.length > 0) ppoHistory = ppoData.history;
+    }
+  } catch (e) {}
 
-  // Render SVG Charts
-  renderLineChart("chart-fitness", history, "fitness", "#2563eb", "Fitness Score");
-  renderLineChart("chart-makespan-tardiness", history, "makespan", "#16a34a", "Makespan (mins)");
+  const initFitness = gaHistory.length ? gaHistory[0].fitness : (ppoHistory.length ? ppoHistory[0].fitness : "--");
+  const bestGaFit = gaHistory.length ? gaHistory[gaHistory.length - 1].fitness : "--";
+  const bestPpoFit = ppoHistory.length ? ppoHistory[ppoHistory.length - 1].fitness : "--";
+
+  const bestFitness = (typeof bestPpoFit === "number" && typeof bestGaFit === "number")
+    ? Math.min(bestGaFit, bestPpoFit)
+    : (typeof bestPpoFit === "number" ? bestPpoFit : (typeof bestGaFit === "number" ? bestGaFit : "--"));
+
+  document.getElementById("prog-init-fitness").textContent = typeof initFitness === "number" ? initFitness.toLocaleString() : "--";
+  document.getElementById("prog-best-fitness").textContent = typeof bestFitness === "number" ? bestFitness.toLocaleString() : "--";
+  document.getElementById("prog-improvement").textContent = (typeof bestPpoFit === "number" && typeof bestGaFit === "number") ? `PPO: ${bestPpoFit.toLocaleString()}` : "--";
+  document.getElementById("prog-generations").textContent = `GA: ${gaHistory.length} Gen | PPO: ${ppoHistory.length} Ep`;
+
+  const seriesFitness = [];
+  if (gaHistory.length > 0) seriesFitness.push({ label: "🧬 GA Metaheuristic", data: gaHistory, key: "fitness", color: "#8b5cf6" });
+  if (ppoHistory.length > 0) seriesFitness.push({ label: "🤖 PPO Reinforcement Learning", data: ppoHistory, key: "fitness", color: "#10b981" });
+
+  const seriesMakespan = [];
+  if (gaHistory.length > 0) seriesMakespan.push({ label: "🧬 GA Makespan", data: gaHistory, key: "makespan", color: "#3b82f6" });
+  if (ppoHistory.length > 0) seriesMakespan.push({ label: "🤖 PPO Makespan", data: ppoHistory, key: "makespan", color: "#06b6d4" });
+
+  renderMultiLineChart("chart-fitness", seriesFitness, "Fitness Convergence");
+  renderMultiLineChart("chart-makespan-tardiness", seriesMakespan, "Makespan Progression (mins)");
 }
 
-function renderLineChart(containerId, data, key, color, labelName) {
+function renderMultiLineChart(containerId, seriesList, labelName) {
   const container = document.getElementById(containerId);
   if (!container) return;
+
+  if (!seriesList || seriesList.length === 0) {
+    container.innerHTML = `<div style="padding:40px; text-align:center; color:var(--text-muted);">No optimization progress data available.</div>`;
+    return;
+  }
 
   const width = container.clientWidth || 500;
   const height = 260;
   const padding = 40;
 
-  const values = data.map((d) => d[key]);
-  const minVal = Math.min(...values);
-  const maxVal = Math.max(...values);
+  let allValues = [];
+  seriesList.forEach((s) => {
+    allValues = allValues.concat(s.data.map((d) => d[s.key]));
+  });
+
+  const minVal = Math.min(...allValues);
+  const maxVal = Math.max(...allValues);
   const range = maxVal - minVal || 1;
 
-  const points = data
-    .map((d, i) => {
-      const x = padding + (i / (data.length - 1)) * (width - 2 * padding);
-      const y = height - padding - ((d[key] - minVal) / range) * (height - 2 * padding);
-      return `${x},${y}`;
-    })
-    .join(" ");
+  let legendHTML = `<g transform="translate(${width - 220}, 15)">`;
+  seriesList.forEach((s, idx) => {
+    legendHTML += `
+      <rect x="0" y="${idx * 16}" width="12" height="12" rx="2" fill="${s.color}" />
+      <text x="18" y="${idx * 16 + 10}" font-size="11" fill="var(--text-main)" font-weight="500">${s.label}</text>
+    `;
+  });
+  legendHTML += `</g>`;
 
-  const fillPoints = `${padding},${height - padding} ${points} ${width - padding},${height - padding}`;
+  let pathsHTML = "";
+  seriesList.forEach((s) => {
+    const points = s.data
+      .map((d, i) => {
+        const x = padding + (i / (s.data.length - 1 || 1)) * (width - 2 * padding);
+        const y = height - padding - ((d[s.key] - minVal) / range) * (height - 2 * padding);
+        return `${x},${y}`;
+      })
+      .join(" ");
+
+    pathsHTML += `<polyline fill="none" stroke="${s.color}" stroke-width="2.5" points="${points}" stroke-linejoin="round" />`;
+
+    const stepInterval = Math.max(1, Math.floor(s.data.length / 15));
+    s.data.forEach((d, i) => {
+      if (i % stepInterval === 0 || i === s.data.length - 1) {
+        const x = padding + (i / (s.data.length - 1 || 1)) * (width - 2 * padding);
+        const y = height - padding - ((d[s.key] - minVal) / range) * (height - 2 * padding);
+        pathsHTML += `<circle cx="${x}" cy="${y}" r="3" fill="${s.color}" stroke="#fff" stroke-width="1" />`;
+      }
+    });
+  });
 
   const svgHTML = `
     <svg viewBox="0 0 ${width} ${height}">
-      <defs>
-        <linearGradient id="grad-${key}" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="${color}" stop-opacity="0.25"/>
-          <stop offset="100%" stop-color="${color}" stop-opacity="0.0"/>
-        </linearGradient>
-      </defs>
-
-      <!-- Fill Area -->
-      <polygon fill="url(#grad-${key})" points="${fillPoints}" />
-
       <!-- Axes -->
       <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="var(--border-glass-bright)" stroke-width="1.5" />
       <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" stroke="var(--border-glass-bright)" stroke-width="1.5" />
@@ -793,19 +863,12 @@ function renderLineChart(containerId, data, key, color, labelName) {
       <!-- Grid & Y Labels -->
       <text x="${padding - 8}" y="${padding + 5}" font-size="10" fill="var(--text-muted)" text-anchor="end">${maxVal.toFixed(0)}</text>
       <text x="${padding - 8}" y="${height - padding}" font-size="10" fill="var(--text-muted)" text-anchor="end">${minVal.toFixed(0)}</text>
-      <text x="${width - padding}" y="${height - 10}" font-size="10" fill="var(--text-muted)" text-anchor="end">Gen ${data.length - 1}</text>
 
-      <!-- Polyline -->
-      <polyline fill="none" stroke="${color}" stroke-width="3" points="${points}" stroke-linejoin="round" />
+      <!-- Legend -->
+      ${legendHTML}
 
-      <!-- Data Dots -->
-      ${data
-        .map((d, i) => {
-          const x = padding + (i / (data.length - 1)) * (width - 2 * padding);
-          const y = height - padding - ((d[key] - minVal) / range) * (height - 2 * padding);
-          return `<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="#fff" stroke-width="1" />`;
-        })
-        .join("")}
+      <!-- Polylines -->
+      ${pathsHTML}
     </svg>
   `;
 
@@ -846,8 +909,8 @@ function renderBenchmarkSection(heuristicComparisons) {
         <td>${e.makespan.toLocaleString()}m</td>
         <td>${e.total_weighted_tardiness.toLocaleString()}m</td>
         <td>${e.total_setup_time.toLocaleString()}m</td>
-        <td>${e.on_time_rate_percent}%</td>
-        <td>${e.avg_tool_utilization_percent}%</td>
+        <td>${e.on_time_rate_percent !== undefined ? e.on_time_rate_percent : 0}%</td>
+        <td>${e.avg_tool_utilization_percent !== undefined ? e.avg_tool_utilization_percent : 0}%</td>
         <td>${rankBadge}</td>
       </tr>
     `;
@@ -957,6 +1020,12 @@ btnToggleCollapse.addEventListener("click", () => {
   }
   renderGanttChart();
 });
+
+if (selectModel) {
+  selectModel.addEventListener("change", () => {
+    loadData(selectModel.value);
+  });
+}
 
 if (selectExperiment) {
   selectExperiment.addEventListener("change", () => {

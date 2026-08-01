@@ -7,7 +7,7 @@ from src.fab.objective import (
     calculate_numba_weighted_tardiness,
 )
 from src.schema.data import DatasetOutputModel
-from src.model.meta.ga.types import Chromosome
+from src.schema.types import Chromosome
 
 
 

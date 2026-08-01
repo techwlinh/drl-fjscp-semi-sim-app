@@ -1,7 +1,7 @@
 from typing import Dict, List, Tuple
 
 from src.config.ga import GAConfig
-from src.fab.decoder import FJSPDecoder
+from src.fab.decoder.fjsp import FJSPDecoder
 from src.fab.objective import compute_weighted_fitness
 from src.schema.data import DatasetOutputModel
 from src.model.meta.ga.types import Chromosome, ScheduledTask

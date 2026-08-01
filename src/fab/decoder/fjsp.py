@@ -1,6 +1,6 @@
 from typing import Dict, List, Tuple
 from src.schema.data import DatasetOutputModel
-from src.model.meta.ga.types import Chromosome, ScheduledTask
+from src.schema.types import Chromosome, ScheduledTask
 
 
 class FJSPDecoder:

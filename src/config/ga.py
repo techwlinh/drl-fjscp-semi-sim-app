@@ -4,8 +4,8 @@ from pydantic import BaseModel, Field
 class GAConfig(BaseModel):
     algorithm_name: str = Field(default="ga", description="Algorithm identifier for exports")
     dataset_path: str = Field(default="data/fjsp_dataset_seed42.json", description="Input dataset JSON path")
-    output_path: str = Field(default="data/ga_schedule_results.json", description="Output schedule JSON path")
-    experiments_dir: str = Field(default="experiments", description="Directory for timestamped experiment outputs")
+    output_path: str = Field(default="experiments/ga/schedule.json", description="Output schedule JSON path")
+    experiments_dir: str = Field(default="experiments", description="Experiments directory")
 
     pop_size: int = Field(default=60, description="Population size")
     generations: int = Field(default=500, description="Number of generations")
