@@ -17,21 +17,25 @@ class ActorCritic(nn.Module):
 
         # Shared/Actor Trunk
         self.actor_net = nn.Sequential(
-            nn.Linear(obs_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, action_dim),
-        )
+                            nn.Linear(obs_dim, 256),
+                            nn.LayerNorm(256),
+                            nn.GELU(),
+                            nn.Linear(256, 256),
+                            nn.LayerNorm(256),
+                            nn.GELU(),
+                            nn.Linear(256, action_dim),
+                        )
 
         # Critic Trunk
         self.critic_net = nn.Sequential(
-            nn.Linear(obs_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, 1),
-        )
+                            nn.Linear(obs_dim, 256),
+                            nn.LayerNorm(256),
+                            nn.GELU(),
+                            nn.Linear(256, 256),
+                            nn.LayerNorm(256),
+                            nn.GELU(),
+                            nn.Linear(256, action_dim),
+                        )
 
     def get_action_distribution(
         self, obs: torch.Tensor, action_mask: torch.Tensor = None

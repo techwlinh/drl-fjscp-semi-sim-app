@@ -13,11 +13,11 @@ class PPOConfig(BaseModel):
 
     # Hyperparameters for PPO
     learning_rate: float = Field(default=3e-4, description="Adam optimizer learning rate")
-    gamma: float = Field(default=0.99, description="Discount factor gamma")
+    gamma: float = Field(default=0.999, description="Discount factor gamma")
     gae_lambda: float = Field(default=0.95, description="GAE lambda parameter")
     clip_eps: float = Field(default=0.2, description="PPO clipping epsilon parameter")
     c_value: float = Field(default=0.5, description="Value loss coefficient")
-    c_entropy: float = Field(default=0.05, description="Entropy regularization coefficient")
+    c_entropy: float = Field(default=0.02, description="Entropy regularization coefficient")
 
     # Training control
     num_episodes: int = Field(default=300, description="Total training episodes")

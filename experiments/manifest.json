@@ -40,13 +40,13 @@
       "algorithm": "ppo_enhanced_continuous_tardiness",
       "title": "PPO (Enhanced Continuous Tardiness)",
       "rel_path": "/experiments/ppo_enhanced_continuous_tardiness/schedule.json",
-      "makespan": 10232.92,
-      "tardiness": 590467.87,
-      "setup_time": 19159.64,
-      "fitness": 9854.14,
+      "makespan": 10294.07,
+      "tardiness": 622616.67,
+      "setup_time": 19061.35,
+      "fitness": 10013.57,
       "scheduled_tasks": 6250,
-      "on_time_rate_percent": 53.0,
-      "avg_tool_utilization_percent": 37.7
+      "on_time_rate_percent": 49.0,
+      "avg_tool_utilization_percent": 37.5
     }
   ]
 }
