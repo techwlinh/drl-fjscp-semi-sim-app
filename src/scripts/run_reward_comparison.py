@@ -40,15 +40,23 @@ from src.model.meta.ga.optimizer import GAOptimizer
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run PPO Reward Comparison & Benchmark Suite")
+    parser = argparse.ArgumentParser(description="Run PPO Reward & State Design Comparison Benchmark Suite")
     parser.add_argument(
-        "-e", "--episodes", type=int, default=30, help="Number of training episodes per PPO strategy"
+        "-e", "--episodes", type=int, default=100, help="Number of training episodes per PPO strategy"
     )
     parser.add_argument(
         "-f", "--force-ga", action="store_true", help="Force re-running GA even if existing schedule exists"
     )
     parser.add_argument(
         "--non-interactive", action="store_true", help="Run non-interactively (default to reusing GA if present)"
+    )
+    parser.add_argument(
+        "-s", "--state-strategies", nargs="+", default=["enhanced", "baseline"],
+        choices=["enhanced", "baseline"], help="State design strategies to evaluate ('enhanced', 'baseline')"
+    )
+    parser.add_argument(
+        "-r", "--reward-strategies", nargs="+", default=None,
+        help="Specific reward strategies to evaluate (default: all registered reward strategies)"
     )
     return parser.parse_args()
 
@@ -70,7 +78,7 @@ def run_benchmark():
     workspace_root = Path(".")
 
     print("=" * 75)
-    print("=== COMPREHENSIVE PPO REWARD & ALGORITHM BENCHMARK SUITE ===")
+    print("=== COMPREHENSIVE PPO REWARD & STATE DESIGN BENCHMARK SUITE ===")
     print("=" * 75)
 
     all_comparisons = {}
@@ -125,79 +133,92 @@ def run_benchmark():
     heuristic_results = heuristic_scheduler.run_all()
     all_comparisons.update(heuristic_results)
 
-    # 3. PPO Reward Strategies Comparison
-    strategies = list(REWARD_STRATEGIES.keys())
-    print(f"\n---> Evaluating {len(strategies)} PPO Reward Strategies ({num_episodes} Episodes per Strategy)...")
+    # 3. PPO State Strategies & Reward Strategies Comparison
+    state_strategies = args.state_strategies
+    reward_strategies = args.reward_strategies or list(REWARD_STRATEGIES.keys())
 
-    for strat_name in strategies:
-        folder_name = f"ppo_{strat_name}"
-        output_dir = Path(f"experiments/{folder_name}")
-        output_dir.mkdir(parents=True, exist_ok=True)
+    total_combos = len(state_strategies) * len(reward_strategies)
+    print(
+        f"\n---> Evaluating {total_combos} PPO Combinations "
+        f"({len(state_strategies)} State Designs x {len(reward_strategies)} Reward Strategies, {num_episodes} Episodes each)..."
+    )
 
-        output_path = str(output_dir / "schedule.json")
-        model_path = str(output_dir / "ppo_model.pt")
+    for state_strat in state_strategies:
+        for strat_name in reward_strategies:
+            if len(state_strategies) == 1 and state_strat == "enhanced":
+                folder_name = f"ppo_{strat_name}"
+            else:
+                folder_name = f"ppo_{state_strat}_{strat_name}"
 
-        print(f"\n" + "-" * 60)
-        print(f"🤖 Training PPO Strategy: [{strat_name.upper()}] -> {output_dir}")
-        print("-" * 60)
+            output_dir = Path(f"experiments/{folder_name}")
+            output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Set fixed random seeds for fair evaluation across strategies
-        torch.manual_seed(42)
-        np.random.seed(42)
+            output_path = str(output_dir / "schedule.json")
+            model_path = str(output_dir / "ppo_model.pt")
 
-        ppo_config = PPOConfig(
-            num_episodes=num_episodes,
-            reward_strategy=strat_name,
-            output_path=output_path,
-            model_checkpoint_path=model_path,
-            use_numba=True,
-        )
+            print(f"\n" + "-" * 60)
+            print(f"🤖 Training PPO [State: {state_strat.upper()} | Reward: {strat_name.upper()}] -> {output_dir}")
+            print("-" * 60)
 
-        start_time = time.time()
-        optimizer = PPOOptimizer(dataset, ppo_config)
-        optimizer.train()
-        elapsed = time.time() - start_time
+            # Set fixed random seeds for fair evaluation across strategies
+            torch.manual_seed(42)
+            np.random.seed(42)
 
-        # Predict best schedule using trained model
-        best_ppo_chromo, ppo_tasks, ppo_metrics = optimizer.predict()
-        ppo_metrics["name"] = f"PPO ({strat_name.replace('_', ' ').title()})"
-        ppo_metrics["training_time_sec"] = round(float(elapsed), 2)
+            ppo_config = PPOConfig(
+                num_episodes=num_episodes,
+                state_strategy=state_strat,
+                reward_strategy=strat_name,
+                output_path=output_path,
+                model_checkpoint_path=model_path,
+                use_numba=True,
+            )
 
-        # Export schedule result for this strategy
-        export_schedule_results(
-            best_ppo_chromo,
-            ppo_tasks,
-            dataset,
-            output_path,
-            history=getattr(optimizer, "history", []),
-            heuristic_comparisons=all_comparisons,
-        )
+            start_time = time.time()
+            optimizer = PPOOptimizer(dataset, ppo_config)
+            optimizer.train()
+            elapsed = time.time() - start_time
 
-        all_comparisons[folder_name] = ppo_metrics
-        print(
-            f"✅ [{strat_name}] Complete: Fitness={best_ppo_chromo.fitness:.2f}, "
-            f"Makespan={best_ppo_chromo.makespan:.1f}m, Tardiness={best_ppo_chromo.total_tardiness:.1f}m, "
-            f"Time={elapsed:.1f}s"
-        )
+            # Predict best schedule using trained model
+            best_ppo_chromo, ppo_tasks, ppo_metrics = optimizer.predict()
+            state_label = "Enhanced" if state_strat == "enhanced" else "Baseline"
+            ppo_metrics["name"] = f"PPO [{state_label} State] ({strat_name.replace('_', ' ').title()})"
+            ppo_metrics["training_time_sec"] = round(float(elapsed), 2)
+
+            # Export schedule result for this strategy
+            export_schedule_results(
+                best_ppo_chromo,
+                ppo_tasks,
+                dataset,
+                output_path,
+                history=getattr(optimizer, "history", []),
+                heuristic_comparisons=all_comparisons,
+            )
+
+            all_comparisons[folder_name] = ppo_metrics
+            print(
+                f"✅ [{state_strat}/{strat_name}] Complete: Fitness={best_ppo_chromo.fitness:.2f}, "
+                f"Makespan={best_ppo_chromo.makespan:.1f}m, Tardiness={best_ppo_chromo.total_tardiness:.1f}m, "
+                f"Time={elapsed:.1f}s"
+            )
 
     # 4. Update experiments manifest for web_viz
     update_experiments_manifest(workspace_root)
 
     # 5. Print Summary Comparison Table
-    print("\n" + "=" * 85)
+    print("\n" + "=" * 95)
     print("FINAL BENCHMARK COMPARISON SUMMARY")
-    print("=" * 85)
-    print(f"{'Algorithm / Strategy':<35} | {'Makespan (m)':<12} | {'Tardiness (m)':<13} | {'Setup (m)':<10} | {'Fitness':<8}")
-    print("-" * 85)
-    
+    print("=" * 95)
+    print(f"{'Algorithm / State & Reward Strategy':<45} | {'Makespan (m)':<12} | {'Tardiness (m)':<13} | {'Setup (m)':<10} | {'Fitness':<8}")
+    print("-" * 95)
+
     sorted_items = sorted(all_comparisons.items(), key=lambda x: x[1].get("fitness", float("inf")))
     for key, v in sorted_items:
         print(
-            f"{v.get('name', key):<35} | {float(v.get('makespan', 0)):<12.1f} | "
+            f"{v.get('name', key):<45} | {float(v.get('makespan', 0)):<12.1f} | "
             f"{float(v.get('total_weighted_tardiness', 0)):<13.1f} | {float(v.get('total_setup_time', 0)):<10.1f} | "
             f"{float(v.get('fitness', 0)):<8.2f}"
         )
-    print("=" * 85)
+    print("=" * 95)
     print("\n✅ All experiments updated in 'experiments/' directory.")
     print("📊 Run 'npm run dev' inside 'web_viz' to compare Gantt charts and progress curves!\n")
 

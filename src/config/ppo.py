@@ -31,5 +31,11 @@ class PPOConfig(BaseModel):
     )
     reward_scale: float = Field(default=1000.0, description="Scaling factor for step rewards to stabilize gradients")
 
+    # State representation options
+    state_strategy: str = Field(
+        default="enhanced",
+        description="State representation strategy: 'baseline' (4 job, 2 tool, 2 global) or 'enhanced' (7 job, 3 WS, 3 global)",
+    )
+
     # Numba JIT Acceleration
     use_numba: bool = Field(default=True, description="Enable Numba acceleration for state transitions")

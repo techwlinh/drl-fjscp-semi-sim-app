@@ -50,14 +50,19 @@ class FJSPEnv(gym.Env):
         self.job_due_dates = np.array([j.due_date for j in dataset.job_list], dtype=np.float32)
         self.job_weights = np.array([j.priority_weight for j in dataset.job_list], dtype=np.float32)
 
+        self.wsg_ids = sorted(list(self.decoder.wsg_tools.keys()))
+        self.num_wsgs = len(self.wsg_ids)
+        self.mean_due_date = float(np.mean(self.job_due_dates))
+
         # Gym Action & Observation spaces
         self.action_space = spaces.Discrete(self.num_jobs)
 
-        # Observation vector dimension:
-        # Per job (4 features): [progress_ratio, remaining_proc_time, slack_time, priority_weight]
-        # Per tool (2 features): [available_time, recipe_idx]
-        # Global (2 features): [current_max_time, completion_ratio]
-        self.obs_dim = self.num_jobs * 4 + self.num_tools * 2 + 2
+        # Observation vector dimension based on state_strategy
+        if self.config.state_strategy == "baseline":
+            self.obs_dim = self.num_jobs * 4 + self.num_tools * 2 + 2
+        else:  # "enhanced"
+            self.obs_dim = self.num_jobs * 7 + self.num_wsgs * 3 + 3
+
         self.observation_space = spaces.Box(
             low=-10000.0, high=10000.0, shape=(self.obs_dim,), dtype=np.float32
         )
@@ -106,41 +111,125 @@ class FJSPEnv(gym.Env):
         return mask
 
     def _get_observation(self) -> np.ndarray:
+        if self.config.state_strategy == "baseline":
+            job_feats = []
+            for j_idx in range(self.num_jobs):
+                step_idx = self.job_step_counts[j_idx]
+                total_s = self.job_total_steps[j_idx]
+                prog_ratio = float(step_idx) / float(total_s)
+
+                recipe = self.dataset.product_recipes[self.jobs_list[j_idx].product_type]
+                rem_proc = sum(s.nominal_processing_time for s in recipe.steps[step_idx:])
+
+                curr_time = float(self.job_current_times[j_idx])
+                slack = float(self.job_due_dates[j_idx]) - (curr_time + rem_proc)
+                weight = float(self.job_weights[j_idx])
+
+                job_feats.extend([
+                    prog_ratio,
+                    rem_proc / 5000.0,
+                    np.clip(slack / 20000.0, -2.0, 2.0),
+                    weight / 10.0,
+                ])
+
+            tool_feats = []
+            for t_id in self.tool_ids:
+                avail = self.tool_available_times[t_id] / 20000.0
+                rec = float(hash(self.tool_current_recipes[t_id]) % 100) / 100.0
+                tool_feats.extend([avail, rec])
+
+            global_feats = [
+                self.current_makespan / 20000.0,
+                float(self.scheduled_ops_count) / float(self.total_ops),
+            ]
+
+            return np.array(job_feats + tool_feats + global_feats, dtype=np.float32)
+
+        # "enhanced" state strategy
         job_feats = []
+        tardiness_risk_count = 0
+        active_jobs_count = 0
+
         for j_idx in range(self.num_jobs):
             step_idx = self.job_step_counts[j_idx]
             total_s = self.job_total_steps[j_idx]
-            prog_ratio = float(step_idx) / float(total_s)
 
-            # Remaining raw processing time from current step onwards
-            recipe = self.dataset.product_recipes[self.jobs_list[j_idx].product_type]
-            rem_proc = sum(s.nominal_processing_time for s in recipe.steps[step_idx:])
+            if step_idx >= total_s:
+                job_feats.extend([1.0, 0.0, 1.0, float(self.job_weights[j_idx]) / 10.0, 0.0, 0.0, 0.0])
+            else:
+                active_jobs_count += 1
+                prog_ratio = float(step_idx) / float(total_s)
 
-            # Slack time
-            curr_time = float(self.job_current_times[j_idx])
-            slack = float(self.job_due_dates[j_idx]) - (curr_time + rem_proc)
-            weight = float(self.job_weights[j_idx])
+                recipe = self.dataset.product_recipes[self.jobs_list[j_idx].product_type]
+                rem_proc = sum(s.nominal_processing_time for s in recipe.steps[step_idx:])
 
-            job_feats.extend([
-                prog_ratio,
-                rem_proc / 5000.0,
-                np.clip(slack / 20000.0, -2.0, 2.0),
-                weight / 10.0,
-            ])
+                curr_time = float(self.job_current_times[j_idx])
+                slack = float(self.job_due_dates[j_idx]) - (curr_time + rem_proc)
+                if slack < 0:
+                    tardiness_risk_count += 1
 
-        tool_feats = []
-        for t_id in self.tool_ids:
-            avail = self.tool_available_times[t_id] / 20000.0
-            rec = float(hash(self.tool_current_recipes[t_id]) % 100) / 100.0
-            tool_feats.extend([avail, rec])
+                slack_norm = float(np.tanh(slack / (self.mean_due_date + 1e-5)))
+                weight = float(self.job_weights[j_idx]) / 10.0
 
-        global_feats = [
-            self.current_makespan / 20000.0,
-            float(self.scheduled_ops_count) / float(self.total_ops),
-        ]
+                global_op_idx = self.decoder.job_op_indices[j_idx][step_idx]
+                op_data = self.decoder.op_info[global_op_idx]
+                valid_tools = op_data["valid_tools"]
+                wsg_id = op_data["wsg_id"]
+                curr_rec = op_data["product_type"]
 
-        obs = np.array(job_feats + tool_feats + global_feats, dtype=np.float32)
-        return obs
+                min_avail_delta = min(
+                    max(0.0, self.tool_available_times[t_id] - curr_time) for t_id in valid_tools
+                )
+                target_ws_ready_time_norm = min_avail_delta / 5000.0
+
+                min_setup = min(
+                    self.decoder.get_setup_time(wsg_id, self.tool_current_recipes[t_id], curr_rec)
+                    for t_id in valid_tools
+                )
+                min_setup_time_norm = min_setup / 100.0
+                same_recipe_indicator = 1.0 if min_setup == 0.0 else 0.0
+
+                job_feats.extend([
+                    prog_ratio,
+                    rem_proc / 5000.0,
+                    slack_norm,
+                    weight,
+                    target_ws_ready_time_norm,
+                    min_setup_time_norm,
+                    same_recipe_indicator,
+                ])
+
+        wsg_feats = []
+        for wsg_id in self.wsg_ids:
+            tools = self.decoder.wsg_tools[wsg_id]
+            num_tools_in_wsg = len(tools)
+
+            wsg_workload = 0.0
+            idle_tools_count = 0
+
+            for t_id in tools:
+                if self.tool_available_times[t_id] <= self.current_makespan:
+                    idle_tools_count += 1
+
+            for j_idx in range(self.num_jobs):
+                s_idx = self.job_step_counts[j_idx]
+                if s_idx < self.job_total_steps[j_idx]:
+                    g_op_idx = self.decoder.job_op_indices[j_idx][s_idx]
+                    if self.decoder.op_info[g_op_idx]["wsg_id"] == wsg_id:
+                        wsg_workload += self.decoder.op_info[g_op_idx]["nominal_proc_time"]
+
+            ws_workload_ratio = wsg_workload / (max(1, num_tools_in_wsg) * 5000.0)
+            ws_idle_ratio = float(idle_tools_count) / float(max(1, num_tools_in_wsg))
+            ws_avg_setup_time = 0.0
+
+            wsg_feats.extend([ws_workload_ratio, ws_idle_ratio, ws_avg_setup_time])
+
+        makespan_norm = self.current_makespan / 20000.0
+        completion_ratio = float(self.scheduled_ops_count) / float(self.total_ops)
+        tardiness_risk_ratio = float(tardiness_risk_count) / float(max(1, active_jobs_count))
+
+        global_feats = [makespan_norm, completion_ratio, tardiness_risk_ratio]
+        return np.array(job_feats + wsg_feats + global_feats, dtype=np.float32)
 
     def step(
         self, action: int

@@ -4,13 +4,49 @@
       "algorithm": "ga",
       "title": "GA Metaheuristic (Proposed)",
       "rel_path": "/experiments/ga/schedule.json",
-      "makespan": 8205.44,
-      "tardiness": 437159.81,
-      "setup_time": 9396.89,
-      "fitness": 6526.81,
+      "makespan": 8411.68,
+      "tardiness": 468571.24,
+      "setup_time": 9306.9,
+      "fitness": 6727.74,
       "scheduled_tasks": 6250,
-      "on_time_rate_percent": 36.0,
-      "avg_tool_utilization_percent": 46.4
+      "on_time_rate_percent": 33.0,
+      "avg_tool_utilization_percent": 45.2
+    },
+    {
+      "algorithm": "ppo_baseline_continuous_tardiness",
+      "title": "PPO (Baseline Continuous Tardiness)",
+      "rel_path": "/experiments/ppo_baseline_continuous_tardiness/schedule.json",
+      "makespan": 10337.9,
+      "tardiness": 620786.67,
+      "setup_time": 19949.4,
+      "fitness": 10195.18,
+      "scheduled_tasks": 6250,
+      "on_time_rate_percent": 53.0,
+      "avg_tool_utilization_percent": 37.5
+    },
+    {
+      "algorithm": "ppo_enhanced_baseline",
+      "title": "PPO (Enhanced Baseline)",
+      "rel_path": "/experiments/ppo_enhanced_baseline/schedule.json",
+      "makespan": 10176.52,
+      "tardiness": 574070.67,
+      "setup_time": 19312.83,
+      "fitness": 9785.88,
+      "scheduled_tasks": 6250,
+      "on_time_rate_percent": 47.0,
+      "avg_tool_utilization_percent": 38.0
+    },
+    {
+      "algorithm": "ppo_enhanced_continuous_tardiness",
+      "title": "PPO (Enhanced Continuous Tardiness)",
+      "rel_path": "/experiments/ppo_enhanced_continuous_tardiness/schedule.json",
+      "makespan": 10232.92,
+      "tardiness": 590467.87,
+      "setup_time": 19159.64,
+      "fitness": 9854.14,
+      "scheduled_tasks": 6250,
+      "on_time_rate_percent": 53.0,
+      "avg_tool_utilization_percent": 37.7
     }
   ]
 }
