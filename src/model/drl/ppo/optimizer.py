@@ -52,7 +52,14 @@ class PPOOptimizer:
             f"Dataset: '{self.config.dataset_path}' | Episodes: {self.config.num_episodes}"
         )
 
-        for episode in range(1, self.config.num_episodes + 1):
+        import torch
+
+        pbar = tqdm(
+            range(1, self.config.num_episodes + 1),
+            desc=f"PPO ({self.agent.device.type.upper()})",
+            unit="ep",
+        )
+        for episode in pbar:
             obs, info = self.env.reset()
             action_mask = info["action_mask"]
 
@@ -67,44 +74,38 @@ class PPOOptimizer:
             terminated = False
             truncated = False
 
-            with tqdm(
-                total=self.env.total_ops,
-                desc=f"Episode {episode:3d}/{self.config.num_episodes}",
-                unit="step",
-                leave=True,
-            ) as pbar:
-                while not (terminated or truncated):
-                    action, log_prob, value = self.agent.select_action(
-                        obs, action_mask, deterministic=False
-                    )
+            while not (terminated or truncated):
+                action, log_prob_t, value_t = self.agent.select_action(
+                    obs, action_mask, deterministic=False
+                )
 
-                    next_obs, reward, terminated, truncated, next_info = self.env.step(action)
-                    raw_reward = next_info.get("raw_reward", reward * self.config.reward_scale)
-                    next_mask = next_info["action_mask"]
+                next_obs, reward, terminated, truncated, next_info = self.env.step(action)
+                next_mask = next_info["action_mask"]
 
-                    obs_list.append(obs)
-                    mask_list.append(action_mask)
-                    action_list.append(action)
-                    log_prob_list.append(log_prob)
-                    value_list.append(value)
-                    reward_list.append(reward)
-                    done_list.append(terminated or truncated)
+                obs_list.append(torch.tensor(obs, dtype=torch.float32, device=self.agent.device))
+                mask_list.append(torch.tensor(action_mask, dtype=torch.float32, device=self.agent.device))
+                action_list.append(torch.tensor(action, dtype=torch.int64, device=self.agent.device))
+                log_prob_list.append(log_prob_t)
+                value_list.append(value_t)
+                reward_list.append(reward)
+                done_list.append(terminated or truncated)
 
-                    obs = next_obs
-                    action_mask = next_mask
+                obs = next_obs
+                action_mask = next_mask
 
-                    pbar.set_postfix(
-                        {
-                            "reward": f"{reward:.4f}",
-                            "tot_reward": f"{sum(reward_list):.2f}",
-                        }
-                    )
-                    pbar.update(1)
+            # Stack tensors on GPU device
+            obs_t = torch.stack(obs_list)
+            mask_t = torch.stack(mask_list)
+            actions_t = torch.stack(action_list)
+            log_probs_t = torch.stack(log_prob_list).reshape(-1)
+            values_t = torch.stack(value_list).reshape(-1)
+            rewards_t = torch.tensor(reward_list, dtype=torch.float32, device=self.agent.device)
+            dones_t = torch.tensor(done_list, dtype=torch.bool, device=self.agent.device)
 
-            # GAE computation & PPO policy update
-            advantages, returns = self.agent.compute_gae(reward_list, value_list, done_list)
-            losses = self.agent.update(
-                obs_list, mask_list, action_list, log_prob_list, returns, advantages
+            # GPU-native GAE computation & PPO policy update
+            advantages_t, returns_t = self.agent.compute_gae_gpu(rewards_t, values_t, dones_t)
+            losses = self.agent.update_gpu(
+                obs_t, mask_t, actions_t, log_probs_t, returns_t, advantages_t
             )
 
             # Evaluate episode schedule
@@ -132,7 +133,7 @@ class PPOOptimizer:
                 best_chromo = chromo
                 self.agent.save_model(self.config.model_checkpoint_path)
 
-            total_reward = sum(reward_list)
+            total_reward = float(rewards_t.sum().item())
             history.append(
                 {
                     "episode": episode,
@@ -143,6 +144,15 @@ class PPOOptimizer:
                     "total_reward": total_reward,
                     "policy_loss": losses["policy_loss"],
                     "value_loss": losses["value_loss"],
+                }
+            )
+
+            pbar.set_postfix(
+                {
+                    "R_tot": f"{total_reward:.1f}",
+                    "Fit": f"{chromo.fitness:.1f}",
+                    "Best": f"{best_fitness:.1f}",
+                    "MS": f"{makespan:.1f}",
                 }
             )
 
