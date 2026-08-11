@@ -1,4 +1,5 @@
 from typing import Any, Tuple
+import numpy as np
 from src.model.drl.ppo.reward.base import BaseRewardStrategy
 
 
@@ -8,6 +9,13 @@ class MilestoneProgressReward(BaseRewardStrategy):
     Provides proportional progress rewards per operation step completed, plus milestone due-date
     bonuses/penalties based on fractional lot progress (step_idx / total_steps).
     """
+
+    def __init__(self, env: Any):
+        super().__init__(env)
+        self.prev_milestone_tardiness = np.zeros(self.env.num_jobs, dtype=np.float32)
+
+    def reset(self):
+        self.prev_milestone_tardiness.fill(0.0)
 
     def compute_reward(
         self,
@@ -27,6 +35,11 @@ class MilestoneProgressReward(BaseRewardStrategy):
         milestone_due = due * (float(step_idx) / float(total_steps))
         milestone_tardiness = max(0.0, float(best_finish_time) - milestone_due)
 
+        delta_milestone_tard = max(
+            0.0, milestone_tardiness - float(self.prev_milestone_tardiness[job_idx])
+        )
+        self.prev_milestone_tardiness[job_idx] = milestone_tardiness
+
         if is_final_step:
             actual_tard = weight * max(0.0, float(best_finish_time) - due)
             self.env.total_weighted_tardiness += actual_tard
@@ -35,7 +48,7 @@ class MilestoneProgressReward(BaseRewardStrategy):
         progress_reward = 1.0 / float(total_steps)
 
         # Milestone tardiness penalty
-        milestone_penalty = weight * (milestone_tardiness / 100.0)
+        milestone_penalty = weight * (delta_milestone_tard / 100.0)
 
         raw_reward = (
             progress_reward
@@ -44,5 +57,6 @@ class MilestoneProgressReward(BaseRewardStrategy):
             - self.obj_config.weight_setup * best_setup_time
             - self.obj_config.weight_idle * (best_idle_time / 10.0)
         )
-        reward = raw_reward / (self.config.reward_scale / 100.0)
+        # RC5 fix: was /100.0 (100x scale bug); now consistent with all other strategies
+        reward = raw_reward / self.config.reward_scale
         return float(raw_reward), float(reward)

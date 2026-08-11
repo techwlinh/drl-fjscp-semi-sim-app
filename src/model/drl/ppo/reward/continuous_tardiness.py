@@ -65,5 +65,7 @@ class ContinuousTardinessReward(BaseRewardStrategy):
             + self.obj_config.weight_tardiness * (delta_est_tard / float(self.env.num_jobs))
             + self.obj_config.weight_idle * (best_idle_time / 10.0)
         )
+        # Scaling convention: all reward strategies divide by reward_scale (default 1000).
+        # This is the canonical convention every strategy must follow; RC6 (Task 10) will retune the value later.
         reward = raw_reward / self.config.reward_scale
         return float(raw_reward), float(reward)

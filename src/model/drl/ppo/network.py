@@ -17,25 +17,25 @@ class ActorCritic(nn.Module):
 
         # Shared/Actor Trunk
         self.actor_net = nn.Sequential(
-                            nn.Linear(obs_dim, 256),
-                            nn.LayerNorm(256),
-                            nn.GELU(),
-                            nn.Linear(256, 256),
-                            nn.LayerNorm(256),
-                            nn.GELU(),
-                            nn.Linear(256, action_dim),
-                        )
+            nn.Linear(obs_dim, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Linear(256, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Linear(256, action_dim),
+        )
 
         # Critic Trunk
         self.critic_net = nn.Sequential(
-                            nn.Linear(obs_dim, 256),
-                            nn.LayerNorm(256),
-                            nn.GELU(),
-                            nn.Linear(256, 256),
-                            nn.LayerNorm(256),
-                            nn.GELU(),
-                            nn.Linear(256, action_dim),
-                        )
+            nn.Linear(obs_dim, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Linear(256, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Linear(256, 1),
+        )
 
     def get_action_distribution(
         self, obs: torch.Tensor, action_mask: torch.Tensor = None
@@ -45,7 +45,9 @@ class ActorCritic(nn.Module):
         if action_mask is not None:
             # Mask invalid actions with large negative value (-1e9)
             HUGE_NEG = -1e9
-            logits = torch.where(action_mask > 0.5, logits, torch.tensor(HUGE_NEG, device=logits.device))
+            logits = torch.where(
+                action_mask > 0.5, logits, torch.tensor(HUGE_NEG, device=logits.device)
+            )
 
         return Categorical(logits=logits)
 
@@ -57,7 +59,10 @@ class ActorCritic(nn.Module):
         return dist, value
 
     def act(
-        self, obs: torch.Tensor, action_mask: torch.Tensor = None, deterministic: bool = False
+        self,
+        obs: torch.Tensor,
+        action_mask: torch.Tensor = None,
+        deterministic: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         dist, value = self.forward(obs, action_mask)
 

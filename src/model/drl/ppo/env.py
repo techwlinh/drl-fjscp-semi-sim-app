@@ -325,6 +325,5 @@ class FJSPEnv(gym.Env):
 
     def get_chromosome(self) -> Chromosome:
         """Construct full Chromosome (os, ms) from environment episode sequence."""
-        # Replace missing ms entries with default 0 if incomplete
-        ms = [m if m >= 0 else 0 for m in self.ms_sequence]
-        return Chromosome(os=self.os_sequence, ms=ms)
+        # D1: PPO learns job-sequencing only; ms=[] lets decoder use active-insertion/EFT (same path as GA)
+        return Chromosome(os=self.os_sequence, ms=[])

@@ -42,7 +42,7 @@ from src.model.meta.ga.optimizer import GAOptimizer
 def parse_args():
     parser = argparse.ArgumentParser(description="Run PPO Reward & State Design Comparison Benchmark Suite")
     parser.add_argument(
-        "-e", "--episodes", type=int, default=100, help="Number of training episodes per PPO strategy"
+        "-e", "--episodes", type=int, default=1000, help="Number of training episodes per PPO strategy"
     )
     parser.add_argument(
         "-f", "--force-ga", action="store_true", help="Force re-running GA even if existing schedule exists"

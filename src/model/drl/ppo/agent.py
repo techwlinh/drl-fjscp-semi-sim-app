@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -11,8 +11,7 @@ from src.model.drl.ppo.network import ActorCritic
 
 class PPOAgent:
     """
-    Proximal Policy Optimization (PPO) Agent with GPU-Native GAE & Action Masking.
-    Supports CUDA, Apple Silicon MPS, and CPU.
+    Proximal Policy Optimization (PPO) Agent with GAE & Action Masking.
     """
 
     def __init__(self, obs_dim: int, action_dim: int, config: PPOConfig = None):
@@ -20,68 +19,33 @@ class PPOAgent:
         self.action_dim = action_dim
         self.config = config or PPOConfig()
 
-        if torch.cuda.is_available():
-            self.device = torch.device("cuda")
-        elif torch.backends.mps.is_available():
-            self.device = torch.device("mps")
-        else:
-            self.device = torch.device("cpu")
-
-        print(f"⚡ PPOAgent initialized on device: {self.device.type.upper()}")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.network = ActorCritic(obs_dim, action_dim).to(self.device)
         self.optimizer = optim.Adam(self.network.parameters(), lr=self.config.learning_rate)
+        self._update_count = 0
+        if self.config.lr_decay:
+            total_steps = self.config.lr_decay_steps or max(1, self.config.num_episodes // max(1, self.config.rollouts_per_update))
+            self.lr_scheduler = optim.lr_scheduler.LinearLR(
+                self.optimizer,
+                start_factor=1.0,
+                end_factor=self.config.lr_final_fraction,
+                total_iters=total_steps,
+            )
+        else:
+            self.lr_scheduler = None
 
     def select_action(
-        self,
-        obs: Union[np.ndarray, torch.Tensor],
-        action_mask: Union[np.ndarray, torch.Tensor],
-        deterministic: bool = False,
-    ) -> Tuple[int, torch.Tensor, torch.Tensor]:
-        if isinstance(obs, np.ndarray):
-            obs_t = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-        else:
-            obs_t = obs.unsqueeze(0) if obs.dim() == 1 else obs
-
-        if isinstance(action_mask, np.ndarray):
-            mask_t = torch.tensor(action_mask, dtype=torch.float32, device=self.device).unsqueeze(0)
-        else:
-            mask_t = action_mask.unsqueeze(0) if action_mask.dim() == 1 else action_mask
+        self, obs: np.ndarray, action_mask: np.ndarray, deterministic: bool = False
+    ) -> Tuple[int, float, float]:
+        obs_t = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+        mask_t = torch.tensor(action_mask, dtype=torch.float32, device=self.device).unsqueeze(0)
 
         with torch.no_grad():
             action_t, log_prob_t, value_t = self.network.act(
                 obs_t, mask_t, deterministic=deterministic
             )
 
-        return action_t.item(), log_prob_t.squeeze(0), value_t.squeeze(0)
-
-    def compute_gae_gpu(
-        self,
-        rewards: torch.Tensor,
-        values: torch.Tensor,
-        dones: torch.Tensor,
-        next_value: float = 0.0,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Compute Generalized Advantage Estimation (GAE) and Returns directly on GPU tensors."""
-        rewards = rewards.reshape(-1)
-        values = values.reshape(-1)
-        dones = dones.reshape(-1)
-
-        T = rewards.shape[0]
-        advantages = torch.zeros(T, dtype=torch.float32, device=self.device)
-        last_gae_lam = 0.0
-
-        next_val_t = torch.tensor([next_value], dtype=torch.float32, device=self.device)
-        values_ext = torch.cat([values, next_val_t])
-
-        for t in reversed(range(T)):
-            non_terminal = 1.0 - dones[t].float()
-            delta = rewards[t] + self.config.gamma * values_ext[t + 1] * non_terminal - values_ext[t]
-            advantages[t] = last_gae_lam = (
-                delta + self.config.gamma * self.config.gae_lambda * non_terminal * last_gae_lam
-            )
-
-        returns = advantages + values
-        return advantages, returns
+        return action_t.item(), log_prob_t.item(), value_t.item()
 
     def compute_gae(
         self,
@@ -90,7 +54,7 @@ class PPOAgent:
         dones: List[bool],
         next_value: float = 0.0,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Compute Generalized Advantage Estimation (GAE) on CPU NumPy arrays (Legacy fallback)."""
+        """Compute Generalized Advantage Estimation (GAE) and Returns."""
         rewards_arr = np.array(rewards, dtype=np.float32)
         values_arr = np.array(values + [next_value], dtype=np.float32)
         dones_arr = np.array(dones, dtype=np.float32)
@@ -108,25 +72,30 @@ class PPOAgent:
         returns = advantages + values_arr[:-1]
         return advantages, returns
 
-    def update_gpu(
+    def update(
         self,
-        obs_t: torch.Tensor,
-        mask_t: torch.Tensor,
-        actions_t: torch.Tensor,
-        old_log_probs_t: torch.Tensor,
-        returns_t: torch.Tensor,
-        advantages_t: torch.Tensor,
+        obs_list: List[np.ndarray],
+        mask_list: List[np.ndarray],
+        action_list: List[int],
+        old_log_prob_list: List[float],
+        returns: np.ndarray,
+        advantages: np.ndarray,
     ) -> Dict[str, float]:
-        """Perform GPU-native PPO gradient updates across minibatch epochs."""
-        old_log_probs_t = old_log_probs_t.reshape(-1)
-        returns_t = returns_t.reshape(-1)
-        advantages_t = advantages_t.reshape(-1)
+        """Perform PPO gradient updates across minibatch epochs."""
+        obs_t = torch.tensor(np.array(obs_list), dtype=torch.float32, device=self.device)
+        mask_t = torch.tensor(np.array(mask_list), dtype=torch.float32, device=self.device)
+        actions_t = torch.tensor(np.array(action_list), dtype=torch.int64, device=self.device)
+        old_log_probs_t = torch.tensor(
+            np.array(old_log_prob_list), dtype=torch.float32, device=self.device
+        )
+        returns_t = torch.tensor(returns, dtype=torch.float32, device=self.device)
+        advantages_t = torch.tensor(advantages, dtype=torch.float32, device=self.device)
 
-        # Normalize advantages on GPU
+        # Normalize advantages
         if len(advantages_t) > 1:
             advantages_t = (advantages_t - advantages_t.mean()) / (advantages_t.std() + 1e-8)
 
-        dataset_size = obs_t.shape[0]
+        dataset_size = len(obs_list)
         batch_size = min(self.config.batch_size, dataset_size)
 
         policy_losses = []
@@ -134,7 +103,7 @@ class PPOAgent:
         entropy_losses = []
 
         for _ in range(self.config.ppo_epochs):
-            permutation = torch.randperm(dataset_size, device=self.device)
+            permutation = torch.randperm(dataset_size)
             for start_idx in range(0, dataset_size, batch_size):
                 batch_indices = permutation[start_idx : start_idx + batch_size]
 
@@ -172,36 +141,24 @@ class PPOAgent:
                 value_losses.append(value_loss.item())
                 entropy_losses.append(entropy_loss.item())
 
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.step()
+        self._update_count += 1
+        if self._update_count % 10 == 0:
+            current_lr = self.optimizer.param_groups[0]["lr"]
+            print(f"LR update={self._update_count} lr={current_lr:.2e}", flush=True)
+
         return {
             "policy_loss": float(np.mean(policy_losses)),
             "value_loss": float(np.mean(value_losses)),
             "entropy_loss": float(np.mean(entropy_losses)),
         }
 
-    def update(
-        self,
-        obs_list: List[np.ndarray],
-        mask_list: List[np.ndarray],
-        action_list: List[int],
-        old_log_prob_list: List[float],
-        returns: np.ndarray,
-        advantages: np.ndarray,
-    ) -> Dict[str, float]:
-        """Perform PPO gradient updates (Legacy fallback)."""
-        obs_t = torch.tensor(np.array(obs_list), dtype=torch.float32, device=self.device)
-        mask_t = torch.tensor(np.array(mask_list), dtype=torch.float32, device=self.device)
-        actions_t = torch.tensor(np.array(action_list), dtype=torch.int64, device=self.device)
-        old_log_probs_t = torch.tensor(
-            np.array(old_log_prob_list), dtype=torch.float32, device=self.device
-        )
-        returns_t = torch.tensor(returns, dtype=torch.float32, device=self.device)
-        advantages_t = torch.tensor(advantages, dtype=torch.float32, device=self.device)
-        return self.update_gpu(obs_t, mask_t, actions_t, old_log_probs_t, returns_t, advantages_t)
-
     def save_model(self, filepath: str) -> None:
         path = Path(filepath)
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(self.network.state_dict(), path)
+        print(f"PPO model checkpoint saved to: {filepath}")
 
     def load_model(self, filepath: str) -> bool:
         path = Path(filepath)
@@ -212,4 +169,3 @@ class PPOAgent:
         self.network.eval()
         print(f"PPO model weights loaded from: {filepath}")
         return True
-

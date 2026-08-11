@@ -12,15 +12,16 @@ class WorkloadBalanceReward(BaseRewardStrategy):
 
     def __init__(self, env: Any):
         super().__init__(env)
-        self.curr_est_tardiness = np.zeros(self.env.num_jobs, dtype=np.float32)
+        self.curr_est_tardiness: np.ndarray = np.zeros(self.env.num_jobs, dtype=np.float32)
+        self.prev_workload_var = 0.0
         self._init_rem_proc_tables()
 
     def _init_rem_proc_tables(self):
-        self.rem_proc_lookup = []
-        for j_idx, job in enumerate(self.env.jobs_list):
+        self.rem_proc_lookup: list[list[float]] = []
+        for job in self.env.jobs_list:
             recipe = self.env.dataset.product_recipes[job.product_type]
             step_times = [s.nominal_processing_time for s in recipe.steps]
-            rem = [sum(step_times[k:]) for k in range(len(step_times))]
+            rem = [float(sum(step_times[k:])) for k in range(len(step_times))]
             rem.append(0.0)
             self.rem_proc_lookup.append(rem)
 
@@ -30,6 +31,7 @@ class WorkloadBalanceReward(BaseRewardStrategy):
             weight = float(self.env.job_weights[j_idx])
             initial_ect = self.rem_proc_lookup[j_idx][0]
             self.curr_est_tardiness[j_idx] = weight * max(0.0, initial_ect - due)
+        self.prev_workload_var = 0.0
 
     def compute_reward(
         self,
@@ -57,14 +59,17 @@ class WorkloadBalanceReward(BaseRewardStrategy):
 
         # Calculate tool workload imbalance (variance of tool completion times)
         tool_times = list(self.env.tool_available_times.values())
-        workload_var = float(np.std(tool_times)) / 100.0 if tool_times else 0.0
+        # RC5 fix: was absolute std (accumulated every step); now delta to prevent reward drift
+        curr_var = float(np.std(tool_times)) / 100.0 if tool_times else 0.0
+        delta_var = max(0.0, curr_var - self.prev_workload_var)
+        self.prev_workload_var = curr_var
 
         raw_reward = - (
             self.obj_config.weight_makespan * delta_makespan
             + self.obj_config.weight_setup * best_setup_time
             + self.obj_config.weight_tardiness * (delta_est_tard / float(self.env.num_jobs))
             + self.obj_config.weight_idle * (best_idle_time / 10.0)
-            + 0.05 * workload_var
+            + 0.05 * delta_var
         )
         reward = raw_reward / self.config.reward_scale
         return float(raw_reward), float(reward)

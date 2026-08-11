@@ -774,6 +774,7 @@ const STRATEGY_COLORS = {
 async function renderProgressSection(currentHistory) {
   const seriesFitness = [];
   const seriesMakespan = [];
+  const seriesReward = [];
   let globalBestFit = null;
   let allHistories = [];
 
@@ -795,10 +796,19 @@ async function renderProgressSection(currentHistory) {
             const color = STRATEGY_COLORS[algKey] || getProductStyle(item.algorithm).color;
             const label = item.title || item.algorithm.toUpperCase();
 
-            seriesFitness.push({ label, data: hist, key: "fitness", color });
-            seriesMakespan.push({ label, data: hist, key: "makespan", color });
+            const hasBestFitness = hist.some(d => d.best_fitness !== undefined && d.best_fitness !== null);
 
-            const lastFit = hist[hist.length - 1].fitness;
+            if (hasBestFitness) {
+              seriesFitness.push({ label: label + " - Best", data: hist, key: "best_fitness", color, style: "solid" });
+              seriesFitness.push({ label: label + " - Episode", data: hist, key: "fitness", color, style: "dashed" });
+              seriesReward.push({ label: label + " - Reward", data: hist, key: "total_reward", color, style: "solid" });
+            } else {
+              seriesFitness.push({ label, data: hist, key: "fitness", color, style: "solid" });
+            }
+
+            seriesMakespan.push({ label, data: hist, key: "makespan", color, style: "solid" });
+
+            const lastFit = hasBestFitness ? hist[hist.length - 1].best_fitness : hist[hist.length - 1].fitness;
             if (globalBestFit === null || lastFit < globalBestFit) {
               globalBestFit = lastFit;
             }
@@ -815,12 +825,21 @@ async function renderProgressSection(currentHistory) {
 
   // Fallback to passed currentHistory if manifest had no history items
   if (seriesFitness.length === 0 && currentHistory && currentHistory.length > 0) {
-    seriesFitness.push({ label: "Current Run Progress", data: currentHistory, key: "fitness", color: "#10b981" });
-    seriesMakespan.push({ label: "Current Run Makespan", data: currentHistory, key: "makespan", color: "#3b82f6" });
-    globalBestFit = currentHistory[currentHistory.length - 1].fitness;
+    const hasBestFitness = currentHistory.some(d => d.best_fitness !== undefined && d.best_fitness !== null);
+    if (hasBestFitness) {
+      seriesFitness.push({ label: "Current Run - Best", data: currentHistory, key: "best_fitness", color: "#10b981", style: "solid" });
+      seriesFitness.push({ label: "Current Run - Episode", data: currentHistory, key: "fitness", color: "#10b981", style: "dashed" });
+      seriesReward.push({ label: "Current Run - Reward", data: currentHistory, key: "total_reward", color: "#10b981", style: "solid" });
+      globalBestFit = currentHistory[currentHistory.length - 1].best_fitness;
+    } else {
+      seriesFitness.push({ label: "Current Run Progress", data: currentHistory, key: "fitness", color: "#10b981", style: "solid" });
+      globalBestFit = currentHistory[currentHistory.length - 1].fitness;
+    }
+    seriesMakespan.push({ label: "Current Run Makespan", data: currentHistory, key: "makespan", color: "#3b82f6", style: "solid" });
   }
 
-  const initFit = seriesFitness.length > 0 && seriesFitness[0].data.length > 0 ? seriesFitness[0].data[0].fitness : "--";
+  const initFit = seriesFitness.length > 0 && seriesFitness[0].data.length > 0 ? 
+    (seriesFitness[0].key === "best_fitness" ? seriesFitness[0].data[0].best_fitness : seriesFitness[0].data[0].fitness) : "--";
 
   document.getElementById("prog-init-fitness").textContent = typeof initFit === "number" ? initFit.toLocaleString() : "--";
   document.getElementById("prog-best-fitness").textContent = typeof globalBestFit === "number" ? globalBestFit.toLocaleString() : "--";
@@ -829,6 +848,7 @@ async function renderProgressSection(currentHistory) {
 
   renderMultiLineChart("chart-fitness", seriesFitness, "Fitness Convergence");
   renderMultiLineChart("chart-makespan-tardiness", seriesMakespan, "Makespan Progression (mins)");
+  renderMultiLineChart("chart-reward", seriesReward, "Episode Reward");
 }
 
 function renderMultiLineChart(containerId, seriesList, labelName) {
@@ -846,8 +866,13 @@ function renderMultiLineChart(containerId, seriesList, labelName) {
 
   let allValues = [];
   seriesList.forEach((s) => {
-    allValues = allValues.concat(s.data.map((d) => d[s.key]));
+    allValues = allValues.concat(s.data.map((d) => d[s.key]).filter(v => v !== null && v !== undefined && !isNaN(v)));
   });
+
+  if (allValues.length === 0) {
+    container.innerHTML = `<div style="padding:40px; text-align:center; color:var(--text-muted);">No valid data points available.</div>`;
+    return;
+  }
 
   const minVal = Math.min(...allValues);
   const maxVal = Math.max(...allValues);
@@ -855,8 +880,9 @@ function renderMultiLineChart(containerId, seriesList, labelName) {
 
   let legendHTML = `<g transform="translate(${width - 220}, 15)">`;
   seriesList.forEach((s, idx) => {
+    const dashAttr = s.style === "dashed" ? `stroke-dasharray="4,2"` : "";
     legendHTML += `
-      <rect x="0" y="${idx * 16}" width="12" height="12" rx="2" fill="${s.color}" />
+      <line x1="0" y1="${idx * 16 + 6}" x2="12" y2="${idx * 16 + 6}" stroke="${s.color}" stroke-width="2.5" ${dashAttr} />
       <text x="18" y="${idx * 16 + 10}" font-size="11" fill="var(--text-main)" font-weight="500">${s.label}</text>
     `;
   });
@@ -864,21 +890,28 @@ function renderMultiLineChart(containerId, seriesList, labelName) {
 
   let pathsHTML = "";
   seriesList.forEach((s) => {
-    const points = s.data
-      .map((d, i) => {
-        const x = padding + (i / (s.data.length - 1 || 1)) * (width - 2 * padding);
-        const y = height - padding - ((d[s.key] - minVal) / range) * (height - 2 * padding);
+    const validPoints = s.data
+      .map((d, i) => ({ val: d[s.key], index: i }))
+      .filter(p => p.val !== null && p.val !== undefined && !isNaN(p.val));
+
+    if (validPoints.length === 0) return;
+
+    const points = validPoints
+      .map((p) => {
+        const x = padding + (p.index / (s.data.length - 1 || 1)) * (width - 2 * padding);
+        const y = height - padding - ((p.val - minVal) / range) * (height - 2 * padding);
         return `${x},${y}`;
       })
       .join(" ");
 
-    pathsHTML += `<polyline fill="none" stroke="${s.color}" stroke-width="2.5" points="${points}" stroke-linejoin="round" />`;
+    const dashAttr = s.style === "dashed" ? `stroke-dasharray="6,4"` : "";
+    pathsHTML += `<polyline fill="none" stroke="${s.color}" stroke-width="2.5" points="${points}" stroke-linejoin="round" ${dashAttr} />`;
 
     const stepInterval = Math.max(1, Math.floor(s.data.length / 15));
-    s.data.forEach((d, i) => {
-      if (i % stepInterval === 0 || i === s.data.length - 1) {
-        const x = padding + (i / (s.data.length - 1 || 1)) * (width - 2 * padding);
-        const y = height - padding - ((d[s.key] - minVal) / range) * (height - 2 * padding);
+    validPoints.forEach((p) => {
+      if (p.index % stepInterval === 0 || p.index === s.data.length - 1) {
+        const x = padding + (p.index / (s.data.length - 1 || 1)) * (width - 2 * padding);
+        const y = height - padding - ((p.val - minVal) / range) * (height - 2 * padding);
         pathsHTML += `<circle cx="${x}" cy="${y}" r="3" fill="${s.color}" stroke="#fff" stroke-width="1" />`;
       }
     });
