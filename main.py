@@ -1,4 +1,4 @@
-from src.scripts.run_compare import main
+from src.scripts.run_reward_comparison import run_benchmark
 
 if __name__ == "__main__":
-    main()
+    run_benchmark()
