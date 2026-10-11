@@ -46,6 +46,7 @@ DEFAULT_COMPARISON_ALGOS = [
     "ga",
     "pso",
     "sso",
+    "ppo_raw_vanilla",
     "ppo_baseline_baseline",
     "ppo_baseline_continuous_tardiness",
     "ppo_baseline_workload_balance",

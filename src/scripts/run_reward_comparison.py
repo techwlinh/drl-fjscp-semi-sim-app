@@ -52,7 +52,7 @@ def parse_args():
     )
     parser.add_argument(
         "-s", "--state-strategies", nargs="+", default=["enhanced", "baseline"],
-        choices=["enhanced", "baseline"], help="State design strategies to evaluate ('enhanced', 'baseline')"
+        choices=["enhanced", "baseline", "raw"], help="State design strategies to evaluate ('enhanced', 'baseline', 'raw')"
     )
     parser.add_argument(
         "-r", "--reward-strategies", nargs="+", default=None,
@@ -180,7 +180,12 @@ def run_benchmark():
 
             # Predict best schedule using trained model
             best_ppo_chromo, ppo_tasks, ppo_metrics = optimizer.predict()
-            state_label = "Enhanced" if state_strat == "enhanced" else "Baseline"
+            if state_strat == "enhanced":
+                state_label = "Enhanced"
+            elif state_strat == "raw":
+                state_label = "Raw"
+            else:
+                state_label = "Baseline"
             ppo_metrics["name"] = f"PPO [{state_label} State] ({strat_name.replace('_', ' ').title()})"
             ppo_metrics["training_time_sec"] = round(float(elapsed), 2)
 

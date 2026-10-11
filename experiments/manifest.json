@@ -4,13 +4,13 @@
       "algorithm": "ga",
       "title": "GA Metaheuristic (Proposed)",
       "rel_path": "/experiments/ga/schedule.json",
-      "makespan": 8411.68,
-      "tardiness": 468571.24,
-      "setup_time": 9306.9,
-      "fitness": 6727.74,
+      "makespan": 8261.17,
+      "tardiness": 424422.52,
+      "setup_time": 9658.64,
+      "fitness": 6532.19,
       "scheduled_tasks": 6250,
-      "on_time_rate_percent": 33.0,
-      "avg_tool_utilization_percent": 45.2
+      "on_time_rate_percent": 34.0,
+      "avg_tool_utilization_percent": 46.1
     },
     {
       "algorithm": "ppo_baseline_baseline",
@@ -131,6 +131,18 @@
       "scheduled_tasks": 6250,
       "on_time_rate_percent": 59.0,
       "avg_tool_utilization_percent": 36.5
+    },
+    {
+      "algorithm": "ppo_raw_vanilla",
+      "title": "PPO (Raw Vanilla)",
+      "rel_path": "/experiments/ppo_raw_vanilla/schedule.json",
+      "makespan": 11049.06,
+      "tardiness": 213185.87,
+      "setup_time": 10282.1,
+      "fitness": 6437.07,
+      "scheduled_tasks": 6250,
+      "on_time_rate_percent": 65.0,
+      "avg_tool_utilization_percent": 34.6
     },
     {
       "algorithm": "pso",

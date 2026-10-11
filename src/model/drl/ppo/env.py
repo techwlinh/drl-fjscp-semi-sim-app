@@ -58,7 +58,9 @@ class FJSPEnv(gym.Env):
         self.action_space = spaces.Discrete(self.num_jobs)
 
         # Observation vector dimension based on state_strategy
-        if self.config.state_strategy == "baseline":
+        if self.config.state_strategy == "raw":
+            self.obs_dim = self.num_jobs * 5 + self.num_tools * 2 + 2
+        elif self.config.state_strategy == "baseline":
             self.obs_dim = self.num_jobs * 4 + self.num_tools * 2 + 2
         else:  # "enhanced"
             self.obs_dim = self.num_jobs * 7 + self.num_wsgs * 3 + 3
@@ -111,6 +113,44 @@ class FJSPEnv(gym.Env):
         return mask
 
     def _get_observation(self) -> np.ndarray:
+        if self.config.state_strategy == "raw":
+            job_feats = []
+            for j_idx in range(self.num_jobs):
+                step_idx = self.job_step_counts[j_idx]
+                total_s = self.job_total_steps[j_idx]
+                prog_ratio = float(step_idx) / float(total_s)
+
+                recipe = self.dataset.product_recipes[self.jobs_list[j_idx].product_type]
+                if step_idx < total_s:
+                    curr_proc = recipe.steps[step_idx].nominal_processing_time / 100.0
+                else:
+                    curr_proc = 0.0
+
+                due_date_norm = float(self.job_due_dates[j_idx]) / 20000.0
+                weight_norm = float(self.job_weights[j_idx]) / 10.0
+                curr_job_time_norm = float(self.job_current_times[j_idx]) / 20000.0
+
+                job_feats.extend([
+                    prog_ratio,
+                    curr_proc,
+                    due_date_norm,
+                    weight_norm,
+                    curr_job_time_norm,
+                ])
+
+            tool_feats = []
+            for t_id in self.tool_ids:
+                avail = self.tool_available_times[t_id] / 20000.0
+                rec = float(hash(self.tool_current_recipes[t_id]) % 100) / 100.0
+                tool_feats.extend([avail, rec])
+
+            global_feats = [
+                self.current_makespan / 20000.0,
+                float(self.scheduled_ops_count) / float(self.total_ops),
+            ]
+
+            return np.array(job_feats + tool_feats + global_feats, dtype=np.float32)
+
         if self.config.state_strategy == "baseline":
             job_feats = []
             for j_idx in range(self.num_jobs):

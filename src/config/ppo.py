@@ -31,7 +31,7 @@ class PPOConfig(BaseModel):
     # Reward shaping options
     reward_strategy: str = Field(
         default="continuous_tardiness",
-        description="Reward strategy: 'baseline', 'continuous_tardiness', 'pbrs', 'milestone_progress', 'workload_balance'",
+        description="Reward strategy: 'baseline', 'continuous_tardiness', 'pbrs', 'milestone_progress', 'workload_balance', 'vanilla'",
     )
     # RC6: reward_scale reduced from 1000 to 100 (raw_reward mean~-25, scaled mean~-0.25; old: 1000)
     reward_scale: float = Field(default=100.0, description="Scaling factor for step rewards to stabilize gradients")
@@ -39,7 +39,7 @@ class PPOConfig(BaseModel):
     # State representation options
     state_strategy: str = Field(
         default="enhanced",
-        description="State representation strategy: 'baseline' (4 job, 2 tool, 2 global) or 'enhanced' (7 job, 3 WS, 3 global)",
+        description="State representation strategy: 'raw' (5 job, 2 tool, 2 global), 'baseline' (4 job, 2 tool, 2 global), or 'enhanced' (7 job, 3 WS, 3 global)",
     )
 
     # Numba JIT Acceleration

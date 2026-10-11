@@ -5,6 +5,7 @@ from src.model.drl.ppo.reward.continuous_tardiness import ContinuousTardinessRew
 from src.model.drl.ppo.reward.pbrs import PotentialBasedRewardShaping
 from src.model.drl.ppo.reward.milestone_progress import MilestoneProgressReward
 from src.model.drl.ppo.reward.workload_balance import WorkloadBalanceReward
+from src.model.drl.ppo.reward.vanilla import VanillaReward
 
 
 REWARD_STRATEGIES = {
@@ -13,6 +14,8 @@ REWARD_STRATEGIES = {
     "pbrs": PotentialBasedRewardShaping,
     "milestone_progress": MilestoneProgressReward,
     "workload_balance": WorkloadBalanceReward,
+    "vanilla": VanillaReward,
+    "vanilla_makespan": VanillaReward,
 }
 
 
@@ -21,7 +24,7 @@ def get_reward_strategy(name: str, env: Any) -> BaseRewardStrategy:
     Factory function to instantiate reward strategy by name.
     
     Args:
-        name: Name of strategy ('baseline', 'continuous_tardiness', 'pbrs', 'milestone_progress', 'workload_balance')
+        name: Name of strategy ('baseline', 'continuous_tardiness', 'pbrs', 'milestone_progress', 'workload_balance', 'vanilla')
         env: FJSPEnv instance
         
     Returns:
